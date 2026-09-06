@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="ZXebjK2cF5fnVGKycsygcn">
+<head data-page-node-id="IsCa0pdqCFHN4aOg8ZLqCH">
+  <meta charset="UTF-8" data-page-node-id="8xi2lJIfYAgLleFVuOJUJ4" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="6HjAQtPOvWz7Elp6uKOeUp" />
+  <title>QQ Agent</title>
+  <link rel="stylesheet" href="/style.css" data-page-node-id="x8F6i7W4lVVFQuDLeTBT6x" />
+  <script>
+    /* 主题预置：在样式生效前就定好 data-theme，避免首屏闪白/闪黑。
+       优先级：localStorage 里的显式选择 > 系统偏好 > 暗色。
+       这里只做"应用"，真正的切换逻辑与持久化在 app.js。 */
+    (function () {
+      try {
+        var saved = localStorage.getItem('qqa-theme') || '';
+        var sys = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        // 合法值：dark / light / system / ?（整活主题）。未知值回退暗色。
+        var theme = (saved === 'light' || saved === 'dark' || saved === '?') ? saved : (saved === 'system' ? sys : (saved || sys));
+        if (theme !== 'light' && theme !== 'dark' && theme !== '?') theme = 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+</head>
+<body data-page-node-id="5GGvlGz5NSrqH40BenIGFr">
+  <header id="topbar" data-page-node-id="DeBgpH1MJHGjjjZ348ThQJ">
+    <div class="brand" data-page-node-id="eJBHX5RA8yyNceHXSG3HE3">QQ Agent <span class="brand-sub" data-page-node-id="VbspRAGex84VDC4rlmYz0x"></span></div>
+    <div class="top-status" data-page-node-id="bJ0ckrJT6G2Tmd3CRV0BDG">
+      <span id="onebot-dot" class="dot dot-off" title="OneBot 连接状态" data-page-node-id="kZj99OAhFFri832S3xi5AY"></span>
+      <span id="onebot-label" class="muted" data-page-node-id="fFZerwgFQ1Y2b5Ypm3z9jJ">OneBot 未连接</span>
+      <span class="sep" data-page-node-id="xxx5qYDKjwTwAWINv1K3YF"></span>
+      <span id="model-label" class="muted" data-page-node-id="mxYqKFiIVWYn1SDTF1HQvJ">模型：-</span>
+      <span class="sep" data-page-node-id="JuGqHVKz2OXrfUFdvohz3O"></span>
+      <span id="usage-label" class="muted" data-page-node-id="ASGoXILEnFSWWqgmj2pS4B">今日：-</span>
+      <span class="sep" data-page-node-id="GWds7ORTDExh6JmgVu8cSC"></span>
+      <span id="search-count-label" class="muted" title="今日联网搜索次数（web_search / web_fetch）" data-page-node-id="OLNka4FykNQRaxEpBoEK6t">搜索：-</span>
+      <button id="theme-btn" class="icon-btn" title="切换主题（暗 → 亮 → 跟随系统）" aria-label="切换主题" data-page-node-id="v47iM0LsuM4VppZ5WLh7Qi"></button>
+      <button id="pause-btn" class="btn btn-small" data-page-node-id="plyqWsDjnlKP1Td6wSVJaD">暂停</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden" data-page-node-id="XwcKf16gobwX1Rec9tqlEn"></div>
+
+  <div id="loading-overlay" class="loading-overlay" data-page-node-id="MpXTOwnEFQFI3iciufCGwk">
+    <div class="loading-card" data-page-node-id="boXG4AHTg9zdLRzAkPQU0d">
+      <div class="loading-title" data-page-node-id="Jd8xjaha2bCfyriCNfs8Tn">QQ Agent 正在启动</div>
+      <div class="loading-sub" id="loading-status" data-page-node-id="pnFkOCeJYMuEWqSGBEF5NX">正在启动 SnowLuma 与 OneBot 服务，请稍候…</div>
+      <div class="loading-spinner" data-page-node-id="pVvSFcW7FhjA5K8LpxpM5o"></div>
+      <pre class="loading-logs" id="loading-logs" data-page-node-id="qCOILAMT7FkCZFYCEKYo4o"></pre>
+    </div>
+  </div>
+
+  <nav id="tabs" data-page-node-id="E9BCxQoSdlNgyXwJBELj6z">
+    <button class="tab active" data-tab="sessions" data-page-node-id="QA2pcdHYdARJK2APBNKZmC">会话</button>
+    <button class="tab" data-tab="chats" data-page-node-id="AdXD0D2NiWH5UBfpPQqzQ2">存档</button>
+    <button class="tab" data-tab="memory" data-page-node-id="vXS9OY6wG4MkJlzQ2aLADZ">记忆</button>
+    <button class="tab" data-tab="usage" data-page-node-id="hcZzcXuMojNoiE7UcRVYfR">用量</button>
+    <button class="tab" data-tab="snowluma" data-page-node-id="xFOx4aoCGOuX8g3AXNrBPj">SnowLuma</button>
+    <button class="tab" data-tab="settings" data-page-node-id="4cXbRBtGmcpcL272eKvHPV">设置</button>
+    <!-- 社区功能（右侧）：金句上传 / 意见收集。金句勾选模式下「确认金句」出现在最左 -->
+    <span class="nav-spacer"></span>
+    <button class="nav-btn hidden" id="quote-confirm-btn">确认金句</button>
+    <button class="nav-btn" id="quote-btn" title="把机器人的精彩发言收录到金句墙">金句上传</button>
+    <button class="nav-btn" id="feedback-btn" title="向作者反馈意见和建议">意见收集</button>
+    <button class="nav-btn nav-btn-hot" id="open-site-btn" title="打开 QQ Agent 网站">打开网站！</button>
+  </nav>
+
+  <main id="layout" data-page-node-id="hvuDZ0DOoYC7fFheJnpiGZ">
+    <!-- 会话视图 -->
+    <section id="view-sessions" class="view active" data-page-node-id="EfuI6TFTs4KY9veb0pkva1">
+      <aside id="session-list" class="list-pane" data-page-node-id="NNTSUz4evxhvLGzuY26viB">
+        <div class="list-head muted" data-page-node-id="aSFyF0LvBNUq4BH2sydWl0"><span id="session-count"></span></div>
+        <div id="session-items" data-page-node-id="q9NIG3lrlhe4Pg8LqGJIuV"></div>
+        <div id="session-more" class="list-more muted" data-page-node-id="sm1"></div>
+      </aside>
+      <div id="session-detail" class="detail-pane" data-page-node-id="ShN02boOBGv1NU6WhJA1OM">
+        <div class="empty-hint" data-page-node-id="yFzcOSD1JKed0mMWexk6QE">← 选择左侧会话查看完整过程</div>
+      </div>
+    </section>
+
+    <!-- 存档视图 -->
+    <section id="view-chats" class="view" data-page-node-id="vrl1zysqFxujSPCndQWW5B">
+      <aside id="chat-list" class="list-pane" data-page-node-id="oHomcx4PNl2n51xeHfeIXI">
+        <div class="list-head muted" data-page-node-id="vlqc8FbmqzRhAk07MYf9xH">消息存档</div>
+        <div id="chat-items" data-page-node-id="mLpAwb09QMOwznGinF4aiy"></div>
+      </aside>
+      <div id="chat-detail" class="detail-pane" data-page-node-id="4Rt59kYD5wtdJBqdZ57bLM">
+        <div class="empty-hint" data-page-node-id="ivIsDOFTVXiPkxXwnVOGlx">← 选择会话查看消息存档</div>
+      </div>
+    </section>
+
+    <!-- SnowLuma 视图 -->
+    <section id="view-snowluma" class="view" data-page-node-id="53uE3Zo3JPnyOzB2ChLSiO">
+      <div id="snowluma-page" class="snowluma-pane" data-page-node-id="VeCbHXFvH0XsHAqkw2PfCF"></div>
+    </section>
+
+    <!-- 记忆视图 -->
+    <section id="view-memory" class="view" data-page-node-id="leNhwCaiL4AF1vB9JaXEQw">
+      <aside id="memory-list" class="list-pane" data-page-node-id="bPnh3N5qAcbMSCpVxYthSd">
+        <div class="list-head muted" data-page-node-id="LVSsdebq14ic87yIdKe0k1">记忆</div>
+        <div id="memory-items" data-page-node-id="Nd0JwkZfmnInPLDO9AjVAD"></div>
+      </aside>
+      <div id="memory-detail" class="detail-pane" data-page-node-id="fXph3DU6yHzmzVZOtXuAii">
+        <div class="empty-hint" data-page-node-id="BSa8XGxI6gVbgsfrKC7QAq">← 选择会话查看记忆</div>
+      </div>
+    </section>
+
+    <!-- 用量视图 -->
+    <section id="view-usage" class="view" data-page-node-id="At5AHGr3EpuOFlDyc7dES4">
+      <div id="usage-page" class="usage-pane" data-page-node-id="1AXcokyh5yiXqQgwn6X2gu"></div>
+    </section>
+
+    <!-- 设置视图 -->
+    <section id="view-settings" class="view" data-page-node-id="b5GnFq8sxB5x457JFQ28DI">
+      <aside id="settings-sidebar" class="settings-sidebar" data-page-node-id="LOVR1dHL6fApG676FLte1j"></aside>
+      <div id="settings-form" class="settings-pane" data-page-node-id="EsfgJ2QGHHSAtdlHW1RQyT"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

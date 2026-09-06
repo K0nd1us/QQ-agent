@@ -1,0 +1,50 @@
+# 敏感数据：整个 data/ 都不进版本库
+# 里面是真实聊天记录、群友记忆、会话留档、表情库，以及**含 API Key 的 config.json**。
+# 分享给别人前用 `node scripts/sanitize-release.mjs` 生成干净副本。
+data/
+
+# SnowLuma 日志：可能含密钥片段与聊天内容
+snowluma/logs/
+*.log
+
+# SnowLuma 是**第三方独立项目**（作者 SnowLumaDevs，自带 EULA 与
+# "源码可见非商业许可"），不是本项目的代码。
+# 它只是运行 QQ 机器人的前置依赖，需使用者自行下载放进项目根目录。
+# 把 113MB 别人的代码推上来既误导人（以为是你写的），也可能违反其许可。
+# 安装方式见 README「安装 SnowLuma」一节。
+snowluma/
+
+# AI 协作过程记录（findings/progress/task_plan）：开发过程稿，不是作品的一部分
+findings.md
+progress.md
+task_plan.md
+
+# 依赖
+node_modules/
+
+# 运行时临时文件
+.trash/
+*.tmp
+*.bak
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 打包产物
+dist/
+release/
+*.exe
+*.msi
+
+# 注意：build/installer.nsh 是安装器源码（旧版迁移向导），要进版本库
+
+# 本地环境变量（若以后用到）
+.env
+.env.local

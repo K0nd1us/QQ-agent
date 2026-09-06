@@ -1,0 +1,84 @@
+{
+  "name": "qq-agent",
+  "version": "0.3.0",
+  "private": false,
+  "description": "QQ 群 AI 机器人（桌面版）：事件驱动的无状态 Agent，接 OpenAI 兼容 API，带会话式控制台。",
+  "type": "module",
+  "main": "electron/main.js",
+  "build": {
+    "appId": "cn.kondius.qq-agent",
+    "productName": "QQ Agent",
+    "artifactName": "qq-agent-v0.3-setup.exe",
+    "asar": false,
+    "files": [
+      "**/*",
+      "!data/**",
+      "!test/**",
+      "!docs/**",
+      "!scripts/**",
+      "!dist/**",
+      "!**/*.map",
+      "!package-lock.json.bak",
+      "!task_plan.md",
+      "!findings.md",
+      "!progress.md",
+      "!*.log"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "QQ Agent",
+      "include": "build/installer.nsh"
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "server": "node src/server.js",
+    "test": "node test/selftest.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs",
+    "test:prompt": "node test/test-prompt.mjs",
+    "test:render": "node test/render-test.mjs",
+    "test:scroll": "node test/scroll-test.mjs",
+    "test:usage": "node test/usage-e2e.mjs"
+  },
+  "dependencies": {
+    "js-yaml": "^5.4.1",
+    "undici": "^6.28.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "license": "MIT",
+  "author": "Kondius",
+  "keywords": [
+    "qq",
+    "bot",
+    "agent",
+    "openai",
+    "onebot",
+    "llm",
+    "desktop",
+    "electron"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kondius/qq-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kondius/qq-agent/issues"
+  },
+  "homepage": "https://github.com/Kondius/qq-agent#readme"
+}
