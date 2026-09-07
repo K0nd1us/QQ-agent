@@ -7,8 +7,22 @@ function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}${path}`;
 }
 
-function authHeaders(apiKey) {
-  return apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+function authHeaders(apiKey, baseUrl = '') {
+  const h = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+  // OpenCode Go 的 omen alpha 等模型强制要求会话头做路由（缺了直接 400）
+  if (/opencode\.ai/i.test(String(baseUrl))) {
+    h['x-opencode-session'] = getOpencodeSessionId();
+  }
+  return h;
+}
+
+// OpenCode Go 会话 ID：进程级生成一次，全程复用（路由粘性 + 缓存命中）
+let opencodeSessionId = '';
+function getOpencodeSessionId() {
+  if (!opencodeSessionId) {
+    opencodeSessionId = `qqagent-${crypto.randomUUID()}`;
+  }
+  return opencodeSessionId;
 }
 
 /**
@@ -141,7 +155,7 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   try {
     res = await fetch(joinUrl(api.baseUrl, '/chat/completions'), {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...authHeaders(api.apiKey) },
+      headers: { 'content-type': 'application/json', ...authHeaders(api.apiKey, api.baseUrl) },
       body: JSON.stringify(body),
       signal: controller.signal
     });
@@ -172,7 +186,7 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
 export async function listModels() {
   const cfg = effectiveApi();
   const res = await fetch(joinUrl(cfg.baseUrl, '/models'), {
-    headers: authHeaders(cfg.apiKey),
+    headers: authHeaders(cfg.apiKey, cfg.baseUrl),
     signal: AbortSignal.timeout(15000)
   });
   if (!res.ok) throw new Error(`获取模型列表失败：HTTP ${res.status}`);

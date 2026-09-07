@@ -175,12 +175,19 @@ function withResolvedKey(p, cfg = getConfig()) {
   return { ...p, apiKey: real };
 }
 
+/** OpenCode Go 路由头：omen alpha 等模型缺 x-opencode-session 直接 400。 */
+function opencodeHeaders(baseUrl) {
+  return /opencode\.ai/i.test(String(baseUrl))
+    ? { 'x-opencode-session': `qqagent-probe-${process.pid}` }
+    : {};
+}
+
 /** 用指定 baseUrl/key 获取模型列表（OpenAI /models）。 */
 export async function fetchModelsFrom(baseUrl, apiKey, timeoutMs = 15000) {
   const base = normalizeBaseUrl(baseUrl);
   if (!base) throw new Error('请先填写 Base URL');
   const res = await fetch(`${base}/models`, {
-    headers: { ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+    headers: { ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}), ...opencodeHeaders(base) },
     signal: AbortSignal.timeout(timeoutMs)
   });
   if (!res.ok) throw new Error(`获取模型列表失败：HTTP ${res.status}`);
@@ -202,7 +209,8 @@ export async function testModelChat({ baseUrl, apiKey, model }) {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {})
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        ...opencodeHeaders(base)
       },
       body: JSON.stringify({
         model: String(model).trim(),
@@ -330,7 +338,8 @@ export async function testProvider(p, timeoutMs = 12000) {
   try {
     const res = await fetch(`${p.baseURL}/models`, {
       headers: {
-        ...(p.apiKey ? { authorization: `Bearer ${p.apiKey}` } : {})
+        ...(p.apiKey ? { authorization: `Bearer ${p.apiKey}` } : {}),
+        ...opencodeHeaders(p.baseURL)
       },
       signal: controller.signal
     });

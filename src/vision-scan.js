@@ -15,8 +15,13 @@ function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}${path}`;
 }
 
-function authHeaders(apiKey) {
-  return apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+function authHeaders(apiKey, baseUrl = '') {
+  const h = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+  // 与 llm.js 一致：OpenCode Go 需要 x-opencode-session 路由头
+  if (/opencode\.ai/i.test(String(baseUrl))) {
+    h['x-opencode-session'] = `qqagent-vision-${process.pid}`;
+  }
+  return h;
 }
 
 /** 读取已保存的探测结果（含未检测的模型不存在条目）。 */
@@ -51,7 +56,7 @@ export async function detectModelVision({ baseUrl, apiKey, model }, timeoutMs = 
   try {
     res = await fetch(joinUrl(baseUrl, '/chat/completions'), {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...authHeaders(apiKey) },
+      headers: { 'content-type': 'application/json', ...authHeaders(apiKey, baseUrl) },
       body: JSON.stringify({
         model,
         messages: [{

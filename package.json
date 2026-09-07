@@ -13,6 +13,9 @@
     "files": [
       "**/*",
       "!data/**",
+      "!snowluma/config/**",
+      "!snowluma/data/**",
+      "!snowluma/logs/**",
       "!test/**",
       "!docs/**",
       "!scripts/**",
