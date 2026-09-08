@@ -371,12 +371,17 @@ export function createApp({ log = console.log } = {}) {
     const now = Date.now();
     if (now - tokenSyncRetryAt < 5000) return;   // 限频
     tokenSyncRetryAt = now;
+    // ⚠️ 先重读磁盘：全新安装是"先启动后登录"，候选集是启动时的 [空令牌]；
+    // 登录后 per-uin 文件才带着真令牌落盘。不回读就会拿空令牌 401 到天荒地老。
+    const refreshed = syncSnowlumaTokens();
     const candidates = onebot.tokenCandidates || [];
-    if (!candidates.length) {
-      if (syncSnowlumaTokens()) onebot.reconnect();
+    if (!candidates.length) return;
+    if (refreshed) {
+      // 候选集变了（sig 变化时内部已重置游标并应用候选[0]）→ 直接拿新集合的第一个试
+      onebot.reconnect();
       return;
     }
-    // 指向下一个候选（首次触发也从 0→1 开始换：刚被 401 拒的就是当前这个）
+    // 磁盘没变化：指向下一个候选（首次触发也从 0→1 开始换：刚被 401 拒的就是当前这个）
     tokenCandidateIndex = (tokenCandidateIndex + 1) % candidates.length;
     const c = candidates[tokenCandidateIndex];
     applyTokens(c);
