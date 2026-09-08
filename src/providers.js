@@ -175,11 +175,11 @@ function withResolvedKey(p, cfg = getConfig()) {
   return { ...p, apiKey: real };
 }
 
-/** OpenCode Go 路由头：omen alpha 等模型缺 x-opencode-session 直接 400。 */
-function opencodeHeaders(baseUrl) {
-  return /opencode\.ai/i.test(String(baseUrl))
-    ? { 'x-opencode-session': `qqagent-probe-${process.pid}` }
-    : {};
+/** OpenCode Go 路由头：omen alpha 等模型缺 x-opencode-session 直接 400。
+ *  中转站转发时域名不是 opencode.ai，要靠模型 id 的 opencode-go/ 前缀识别。 */
+function opencodeHeaders(baseUrl, model = '') {
+  if (!/opencode\.ai/i.test(String(baseUrl)) && !/^opencode-go\//i.test(String(model || ''))) return {};
+  return { 'x-opencode-session': `qqagent-probe-${process.pid}`, 'user-agent': 'qq-agent/0.3' };
 }
 
 /** 用指定 baseUrl/key 获取模型列表（OpenAI /models）。 */
@@ -210,7 +210,7 @@ export async function testModelChat({ baseUrl, apiKey, model }) {
       headers: {
         'content-type': 'application/json',
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        ...opencodeHeaders(base)
+        ...opencodeHeaders(base, model)
       },
       body: JSON.stringify({
         model: String(model).trim(),

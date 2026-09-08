@@ -7,11 +7,13 @@ function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}${path}`;
 }
 
-function authHeaders(apiKey, baseUrl = '') {
+function authHeaders(apiKey, baseUrl = '', model = '') {
   const h = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
-  // OpenCode Go 的 omen alpha 等模型强制要求会话头做路由（缺了直接 400）
-  if (/opencode\.ai/i.test(String(baseUrl))) {
+  // OpenCode Go 强制要求会话头做路由（缺了直接 400）。注意不能只认域名：
+  // 走中转站转发时 baseUrl 不是 opencode.ai，只能靠模型 id 的 opencode-go/ 前缀识别。
+  if (/opencode\.ai/i.test(String(baseUrl)) || /^opencode-go\//i.test(String(model || ''))) {
     h['x-opencode-session'] = getOpencodeSessionId();
+    h['user-agent'] = 'qq-agent/0.3';   // 官方文档要求客户端自报身份，别用通用库名
   }
   return h;
 }
@@ -155,7 +157,7 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   try {
     res = await fetch(joinUrl(api.baseUrl, '/chat/completions'), {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...authHeaders(api.apiKey, api.baseUrl) },
+      headers: { 'content-type': 'application/json', ...authHeaders(api.apiKey, api.baseUrl, api.model) },
       body: JSON.stringify(body),
       signal: controller.signal
     });
