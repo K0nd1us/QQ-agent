@@ -26,8 +26,10 @@
 
 export const OFFICIAL_PRICES = {
   // ══ DeepSeek ══
-  // 来源：DeepSeek 官方中文文档 https://api-docs.deepseek.com/zh-cn/quick_start/pricing（2026-09-03 直取）
+  // 来源：DeepSeek 官方中文文档 https://api-docs.deepseek.com/zh-cn/quick_start/pricing（2026-09-10 文档+API 实测双重核对）
   // 注意：官方直接以人民币标价，这里原样照录，未做任何汇率换算。
+  // 2026-09-10 实测补充：官方 /models 仅列 deepseek-flash、deepseek-v4-pro 两个，文档滞后（仍写仅 vision-exp 收图，
+  // 实测 flash/chat/reasoner 均支持图片输入；v4-pro 实测拒图）。上下文 1M，输出最大 384K。
   // 峰谷规则（官方原文）：高峰为北京时间周一至周五 9:00-12:00、14:00-18:00，其余为闲时；闲时价 = 高峰价的一半。
   // 下表的 in/out/cached 取**闲时**价（即日常大多数时间的实际费率）。
   // v4-flash 自 2026-09 起支持图片输入（视觉能力并入主模型），图片计费沿用 vision-exp 的 384 token/张 封顶规则
@@ -73,10 +75,12 @@ export const OFFICIAL_PRICES = {
     note: '视觉版，费率同 Flash；图片另按 384 token/张 上限计费',
     src: 'official'
   },
-  'deepseek-v4-pro': { in: 4.5, out: 13.5, cached: 0.15, peak: { in: 9, out: 27, cached: 0.30 }, note: '闲时价；高峰翻倍', src: 'official' },
-  'deepseek-v4-pro-0813': { in: 4.5, out: 13.5, cached: 0.15, peak: { in: 9, out: 27, cached: 0.30 }, note: '闲时价；高峰翻倍', src: 'official' },
-  'deepseek-chat': { in: 1.5, out: 4.5, cached: 0.05, note: '映射到 V4-Flash 档', src: 'official' },
-  'deepseek-reasoner': { in: 4.5, out: 13.5, cached: 0.15, note: '映射到 V4-Pro 档', src: 'official' },
+  'deepseek-v4-pro': { in: 4.5, out: 13.5, cached: 0.15, peak: { in: 9, out: 27, cached: 0.30 }, note: '闲时价；高峰翻倍；纯文本——2026-09-10 实测拒绝图片输入（明文报"无法查看图片"）', src: 'official' },
+  'deepseek-v4-pro-0813': { in: 4.5, out: 13.5, cached: 0.15, peak: { in: 9, out: 27, cached: 0.30 }, note: '闲时价；高峰翻倍；纯文本', src: 'official' },
+  // ⚠️ 2026-09-10 官方 API 实测：chat/reasoner 旧别名仍可用且**均支持图片输入**（读图测试通过），
+  // 官方文档（滞后）声称"仅 vision-exp 接受图片"——以实测为准。图片计费同 384 token/张 封顶。
+  'deepseek-chat': { in: 1.5, out: 4.5, cached: 0.05, image: { mode: 'capped', maxTokensPerImage: 384, note: '自动缩放到约 800×800 后按 384 token/张 封顶' }, note: '映射到 V4-Flash 档；实测支持图片输入', src: 'official' },
+  'deepseek-reasoner': { in: 4.5, out: 13.5, cached: 0.15, image: { mode: 'capped', maxTokensPerImage: 384, note: '自动缩放到约 800×800 后按 384 token/张 封顶' }, note: '映射到 V4-Pro 档；实测支持图片输入', src: 'official' },
   'deepseek-v3.1-terminus': { in: 1.5, out: 4.5, cached: 0.05, note: '旧代，按现价近似', src: 'official' },
   'deepseek-r1-0528': { in: 4.5, out: 13.5, cached: 0.15, note: '旧代，按现价近似', src: 'official' },
 

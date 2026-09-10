@@ -61,15 +61,15 @@
 
 | 模型 id | 输入 | 输出 | 缓存命中 | 高峰价 | 图片 | 来源 | 备注 |
 |---|---|---|---|---|---|---|---|
-| `deepseek-chat` | 1.5 | 4.5 | 0.05 | — | — | official | 映射到 V4-Flash 档 |
+| `deepseek-chat` | 1.5 | 4.5 | 0.05 | — | 每张封顶 384 | official | 映射到 V4-Flash 档；2026-09-10 实测支持图片输入 |
 | `deepseek-r1-0528` | 4.5 | 13.5 | 0.15 | — | — | official | 旧代，按现价近似 |
-| `deepseek-reasoner` | 4.5 | 13.5 | 0.15 | — | — | official | 映射到 V4-Pro 档 |
+| `deepseek-reasoner` | 4.5 | 13.5 | 0.15 | — | 每张封顶 384 | official | 映射到 V4-Pro 档；2026-09-10 实测支持图片输入 |
 | `deepseek-v3.1-terminus` | 1.5 | 4.5 | 0.05 | — | — | official | 旧代，按现价近似 |
-| `deepseek-v4-flash` | 1.5 | 4.5 | 0.05 | ✓ 3/9/0.1 | — | official | 闲时价；高峰翻倍 |
-| `deepseek-v4-flash-0731` | 1.5 | 4.5 | 0.05 | ✓ 3/9/0.1 | — | official | 闲时价；高峰翻倍 |
+| `deepseek-v4-flash` | 1.5 | 4.5 | 0.05 | ✓ 3/9/0.1 | 每张封顶 384 | official | 闲时价；高峰翻倍；支持图片输入 |
+| `deepseek-v4-flash-0731` | 1.5 | 4.5 | 0.05 | ✓ 3/9/0.1 | — | official | 闲时价；高峰翻倍；日期快照无图片 |
 | `deepseek-v4-flash-vision-exp` | 1.5 | 4.5 | 0.05 | ✓ 3/9/0.1 | 每张封顶 384 | official | 视觉版，费率同 Flash；图片另按 384 token/张 上限计费 |
-| `deepseek-v4-pro` | 4.5 | 13.5 | 0.15 | ✓ 9/27/0.3 | — | official | 闲时价；高峰翻倍 |
-| `deepseek-v4-pro-0813` | 4.5 | 13.5 | 0.15 | ✓ 9/27/0.3 | — | official | 闲时价；高峰翻倍 |
+| `deepseek-v4-pro` | 4.5 | 13.5 | 0.15 | ✓ 9/27/0.3 | — | official | 闲时价；高峰翻倍；纯文本（2026-09-10 实测拒图） |
+| `deepseek-v4-pro-0813` | 4.5 | 13.5 | 0.15 | ✓ 9/27/0.3 | — | official | 闲时价；高峰翻倍；纯文本 |
 ## 月之暗面 Kimi（4 条，全部 derived）
 
 | 模型 id | 输入 | 输出 | 缓存命中 | 高峰价 | 图片 | 来源 | 备注 |
