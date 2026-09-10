@@ -42,7 +42,7 @@ export const PROVIDER_DOCS = {
   },
   'opencode-go|||deepseek-v4-flash': {
     verdict: 'vision',
-    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（官方视觉能力并入主模型，独立视觉模型 deepseek-v4-flash-vision-exp 仍保留）。来源：api-docs.deepseek.com/zh-cn/guides/vision、Kondius 实测'
+    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（官方视觉能力并入主模型，独立视觉模型 deepseek-v4-flash-vision-exp 仍保留）。来源：api-docs.deepseek.com/zh-cn/guides/vision + 官方 API 实测（2026-09-10，文档滞后：文档仍写仅 vision-exp 收图）'
   },
   'opencode-go|||deepseek-v4-pro': {
     verdict: 'no-vision',
@@ -98,7 +98,7 @@ export const PROVIDER_DOCS = {
   },
   'local-8787|||deepseek-v4-flash': {
     verdict: 'vision',
-    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（视觉能力并入主模型）。来源：api-docs.deepseek.com/zh-cn/guides/vision、Kondius 实测'
+    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（视觉能力并入主模型）。来源：api-docs.deepseek.com/zh-cn/guides/vision + 官方 API 实测（2026-09-10，文档滞后：文档仍写仅 vision-exp 收图）'
   },
   'local-8787|||deepseek-v4-pro': {
     verdict: 'no-vision',
@@ -127,11 +127,11 @@ export const MODEL_DOCS = {
   },
   'deepseek-v4-flash': {
     verdict: 'vision',
-    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（官方视觉能力并入主模型）。来源：api-docs.deepseek.com/zh-cn/guides/vision、Kondius 实测'
+    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（官方视觉能力并入主模型）。来源：api-docs.deepseek.com/zh-cn/guides/vision + 官方 API 实测（2026-09-10，文档滞后：文档仍写仅 vision-exp 收图）'
   },
   'deepseek-flash': {
     verdict: 'vision',
-    note: '中转站别名（指向 deepseek-v4-flash），随主模型支持图片输入。来源：api-docs.deepseek.com'
+    note: '中转站别名（指向 deepseek-v4-flash），随主模型支持图片输入。来源：官方 API 实测 2026-09-10'
   },
   'deepseek-v4-flash-0731': {
     verdict: 'no-vision',
