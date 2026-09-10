@@ -30,7 +30,19 @@ export const OFFICIAL_PRICES = {
   // 注意：官方直接以人民币标价，这里原样照录，未做任何汇率换算。
   // 峰谷规则（官方原文）：高峰为北京时间周一至周五 9:00-12:00、14:00-18:00，其余为闲时；闲时价 = 高峰价的一半。
   // 下表的 in/out/cached 取**闲时**价（即日常大多数时间的实际费率）。
-  'deepseek-v4-flash': { in: 1.5, out: 4.5, cached: 0.05, peak: { in: 3, out: 9, cached: 0.10 }, note: '闲时价；高峰翻倍', src: 'official' },
+  // v4-flash 自 2026-09 起支持图片输入（视觉能力并入主模型），图片计费沿用 vision-exp 的 384 token/张 封顶规则
+  'deepseek-v4-flash': {
+    in: 1.5, out: 4.5, cached: 0.05,
+    peak: { in: 3, out: 9, cached: 0.10 },
+    image: {
+      mode: 'capped',
+      maxTokensPerImage: 384,
+      note: '自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关'
+    },
+    note: '闲时价；高峰翻倍；支持图片输入（384 token/张封顶）',
+    src: 'official'
+  },
+  // ⚠️ -0731 是日期快照，能力冻结在 07-31，不随主模型获得图片输入——勿加 image 计费
   'deepseek-v4-flash-0731': { in: 1.5, out: 4.5, cached: 0.05, peak: { in: 3, out: 9, cached: 0.10 }, note: '闲时价；高峰翻倍', src: 'official' },
   // 视觉版：费率同 Flash，另需按图片数量加算 token。
   // 官方原文（api-docs.deepseek.com/zh-cn/guides/vision#token-usage）：

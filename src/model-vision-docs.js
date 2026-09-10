@@ -41,8 +41,8 @@ export const PROVIDER_DOCS = {
     note: 'MiMo-V2.5 基座为原生全模态（图/视频/音频理解），官方提供图片理解 API 文档。来源：mimo.xiaomi.com/mimo-v2-5、mimo.mi.com/docs 图片理解'
   },
   'opencode-go|||deepseek-v4-flash': {
-    verdict: 'no-vision',
-    note: 'DeepSeek-V4-Flash 为纯文本模型，塞图报错；官方视觉是独立模型 deepseek-v4-flash-vision-exp。来源：docs.cloudbase.net、api-docs.deepseek.com/zh-cn/news/news260821'
+    verdict: 'vision',
+    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（官方视觉能力并入主模型，独立视觉模型 deepseek-v4-flash-vision-exp 仍保留）。来源：api-docs.deepseek.com/zh-cn/guides/vision、Kondius 实测'
   },
   'opencode-go|||deepseek-v4-pro': {
     verdict: 'no-vision',
@@ -54,7 +54,7 @@ export const PROVIDER_DOCS = {
   },
   'a6api|||DeepSeek-V4-Flash-0731': {
     verdict: 'no-vision',
-    note: 'DeepSeek-V4-Flash 为纯文本模型（官方视觉为独立的 deepseek-v4-flash-vision-exp）。来源：docs.cloudbase.net、api-docs.deepseek.com'
+    note: '日期快照能力冻结在 07-31：不支持图片输入。主模型 deepseek-v4-flash 自 2026-09 起已支持图片，看图请换主模型。来源：api-docs.deepseek.com'
   },
   'a6api|||deepseek-v4-pro-0813': {
     verdict: 'no-vision',
@@ -97,8 +97,8 @@ export const PROVIDER_DOCS = {
     note: 'GLM-5.3-Flash 原生多模态。来源：docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash'
   },
   'local-8787|||deepseek-v4-flash': {
-    verdict: 'no-vision',
-    note: 'DeepSeek-V4-Flash 为纯文本模型。来源：docs.cloudbase.net、api-docs.deepseek.com/zh-cn/news/news260821'
+    verdict: 'vision',
+    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（视觉能力并入主模型）。来源：api-docs.deepseek.com/zh-cn/guides/vision、Kondius 实测'
   },
   'local-8787|||deepseek-v4-pro': {
     verdict: 'no-vision',
@@ -118,20 +118,20 @@ export const PROVIDER_DOCS = {
 export const MODEL_DOCS = {
   // DeepSeek
   'deepseek-chat': {
-    verdict: 'no-vision',
-    note: 'DeepSeek 文本模型，无图片输入；官方视觉模型为 deepseek-v4-flash-vision-exp。来源：api-docs.deepseek.com'
+    verdict: 'vision',
+    note: 'deepseek-chat 为 deepseek-v4-flash 的滚动别名，自 2026-09 起随主模型支持图片输入。来源：api-docs.deepseek.com'
   },
   'deepseek-reasoner': {
     verdict: 'no-vision',
     note: 'DeepSeek 推理模型，无图片输入。来源：api-docs.deepseek.com'
   },
   'deepseek-v4-flash': {
-    verdict: 'no-vision',
-    note: 'DeepSeek-V4-Flash 为纯文本模型；官方视觉是独立模型 deepseek-v4-flash-vision-exp。来源：api-docs.deepseek.com/zh-cn/news/news260821'
+    verdict: 'vision',
+    note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（官方视觉能力并入主模型）。来源：api-docs.deepseek.com/zh-cn/guides/vision、Kondius 实测'
   },
   'deepseek-v4-flash-0731': {
     verdict: 'no-vision',
-    note: 'DeepSeek-V4-Flash-0731 为纯文本模型。来源：docs.cloudbase.net、api-docs.deepseek.com'
+    note: '日期快照能力冻结在 07-31：不支持图片输入。主模型 deepseek-v4-flash 自 2026-09 起已支持图片。来源：api-docs.deepseek.com'
   },
   'deepseek-v4-flash-vision-exp': {
     verdict: 'vision',
