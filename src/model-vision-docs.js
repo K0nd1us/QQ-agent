@@ -129,6 +129,10 @@ export const MODEL_DOCS = {
     verdict: 'vision',
     note: 'DeepSeek-V4-Flash 自 2026-09 起支持图片输入（官方视觉能力并入主模型）。来源：api-docs.deepseek.com/zh-cn/guides/vision、Kondius 实测'
   },
+  'deepseek-flash': {
+    verdict: 'vision',
+    note: '中转站别名（指向 deepseek-v4-flash），随主模型支持图片输入。来源：api-docs.deepseek.com'
+  },
   'deepseek-v4-flash-0731': {
     verdict: 'no-vision',
     note: '日期快照能力冻结在 07-31：不支持图片输入。主模型 deepseek-v4-flash 自 2026-09 起已支持图片。来源：api-docs.deepseek.com'

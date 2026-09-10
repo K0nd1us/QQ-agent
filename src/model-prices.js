@@ -44,6 +44,18 @@ export const OFFICIAL_PRICES = {
   },
   // ⚠️ -0731 是日期快照，能力冻结在 07-31，不随主模型获得图片输入——勿加 image 计费
   'deepseek-v4-flash-0731': { in: 1.5, out: 4.5, cached: 0.05, peak: { in: 3, out: 9, cached: 0.10 }, note: '闲时价；高峰翻倍', src: 'official' },
+  // 中转站常见别名（如 A6API 的 deepseek-flash）→ 按 v4-flash 费率折算
+  'deepseek-flash': {
+    in: 1.5, out: 4.5, cached: 0.05,
+    peak: { in: 3, out: 9, cached: 0.10 },
+    image: {
+      mode: 'capped',
+      maxTokensPerImage: 384,
+      note: '自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关'
+    },
+    note: '中转站别名，按 deepseek-v4-flash 闲时价折算；高峰翻倍',
+    src: 'derived'
+  },
   // 视觉版：费率同 Flash，另需按图片数量加算 token。
   // 官方原文（api-docs.deepseek.com/zh-cn/guides/vision#token-usage）：
   //   图片会被自动缩放 —— 小于约 384×384 的放大，更大的缩小到约 800×800；
