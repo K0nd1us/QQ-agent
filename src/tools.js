@@ -72,7 +72,7 @@ export function buildToolDefs() {
   return [
     {
       name: 'send_message',
-      description: '发送消息到当前聊天（本工具只能发到本次会话对应的群/私聊）。messages 传字符串=发一条；传字符串数组=分多条发送（推荐，更像真人）。只有需要明确"我回的是哪条"时才传 replyToMessageId 引用；需要点名某人才传 atUserId。不要在字符串内部用空格分句。',
+      description: '发送消息到当前聊天（本工具只能发到本次会话对应的群/私聊）。messages 传字符串=发一条；传字符串数组=分多条发送（推荐，更像真人）。只有需要明确"我回的是哪条"时才传 replyToMessageId 引用；需要点名某人才传 atUserId。不要在字符串内部用空格分句。想在同一气泡混入 QQ 官方表情，可在文本里直接写 [QQ表情:流泪(#5)] 这样的标记，程序会拆成文字+官方表情发送。',
       parameters: {
         type: 'object',
         properties: {
