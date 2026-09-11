@@ -251,7 +251,7 @@ export function buildToolDefs() {
     },
     {
       name: 'get_recent_messages',
-      description: '往前翻当前会话的更多历史消息（提示词里只带了最近一段；需要更早的上下文时用）。返回带 messageId（就是聊天记录里的 #数字），可用于引用或看图。消息文本出现 [合并转发聊天记录] 时，用 read_forward 展开看内容。',
+      description: '往前翻当前会话的更多历史消息（提示词里只带了最近一段；需要更早的上下文时用）。返回带 messageId（就是聊天记录里的 #数字）和 senderId（发送者 QQ 号；认人以 QQ 号为准，不要信昵称）。可用于引用、看图或拍一拍。消息文本出现 [合并转发聊天记录] 时，用 read_forward 展开看内容。',
       parameters: {
         type: 'object',
         properties: {
@@ -269,6 +269,7 @@ export function buildToolDefs() {
             messageId: m.mid ?? undefined,
             time: new Date(m.ts).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
             sender: m.self ? '我' : m.senderName,
+            senderId: m.self ? undefined : (m.senderId || undefined),
             text: m.text
           }))
         });
