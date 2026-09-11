@@ -308,10 +308,16 @@ function renderBanner() {
   const s = state.status;
   let show = false;
   let html = '';
+  const bans = Array.isArray(s?.bans) ? s.bans : [];
   // 预算保险丝：超限自动暂停
   if (state.paused && s?.orchestrator?.pauseReason === 'budget') {
     show = true;
     html = '💰 今日成本已达预算上限，机器人已自动暂停。到「模型 API → 预算保险丝」调高上限后点恢复。';
+  } else if (bans.length) {
+    show = true;
+    const b = bans[0];
+    const min = Math.max(1, Math.round((b.remainMs || 0) / 60000));
+    html = `🚫 会话 <code>${esc(b.chatKey)}</code> 被 QQ 限制发言，约 ${min} 分钟后自动重试。`;
   } else if (state.paused) {
     show = true;
     html = '⏸ 机器人已暂停，不会处理任何消息。';
@@ -325,6 +331,9 @@ function renderBanner() {
       html += ` <button class="btn btn-small" id="banner-resume-btn">恢复</button>
         <button class="btn btn-small btn-danger" id="banner-resume-read-btn" title="恢复运行，并把暂停期间积压的所有未读消息直接标记为已读（不再处理）">恢复并全部标为已读</button>`;
     }
+    if (bans.length) {
+      html += ' <button class="btn btn-small" id="banner-clear-ban-btn" title="立即解除该会话的发送冷却，马上重试">立即重试</button>';
+    }
     banner.innerHTML = html;
     const link = $('#banner-goto-settings');
     if (link) link.addEventListener('click', (e) => { e.preventDefault(); switchTab('settings'); });
@@ -332,6 +341,19 @@ function renderBanner() {
     if (resumeBtn) resumeBtn.addEventListener('click', () => resumePause({ skipBacklog: false }));
     const resumeReadBtn = $('#banner-resume-read-btn');
     if (resumeReadBtn) resumeReadBtn.addEventListener('click', () => resumePause({ skipBacklog: true }));
+    const clearBanBtn = $('#banner-clear-ban-btn');
+    if (clearBanBtn) {
+      clearBanBtn.addEventListener('click', async () => {
+        try {
+          const chatKey = bans[0].chatKey;
+          const [kind, id] = String(chatKey).split(':');
+          await api(`/api/chats/${kind}_${id}/clear-ban`, { method: 'POST', body: '{}' });
+          await refreshStatus();
+        } catch (e) {
+          console.error('解除熔断失败:', e);
+        }
+      });
+    }
   }
 }
 

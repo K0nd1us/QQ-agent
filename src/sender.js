@@ -27,11 +27,20 @@ export class SendQueue {
    * 识别 QQ 侧“禁止发言”类错误（账号风控 / 群内禁言 / 群全员禁言）。
    * SnowLuma 的原文形如：
    *   send group message failed: Ban state forbit write req   （底层 packet code=-10203）
-   * 其它实现可能回 retcode=100 或“禁言/风控/限制”等文案。
+   * 注意：retcode=100 在 SnowLuma 里含义很宽（HTTP download failed: 400 等资源
+   * 失败也会带），不能单独当禁言信号，否则表情包 URL 过期会被误熔断 30 分钟。
    */
   static isBannedError(error) {
     const s = String(error?.message ?? error ?? '');
-    return /ban state|forbit write|retcode=100\b|retcode:\s*100\b|禁言|风控|被限制|发送失败.*限制/i.test(s);
+    // 资源下载/参数类失败：明确不是禁言
+    if (/download failed|HTTP download|资源下载|文件下载|无效.*url|invalid url/i.test(s)
+      && !/ban state|forbit write|禁言|风控|被限制/i.test(s)) {
+      return false;
+    }
+    // 明确的禁言/风控文案
+    if (/ban state|forbit write|禁言|风控|被限制|发送失败.*限制|账号异常/i.test(s)) return true;
+    // retcode=100 仅在同时出现 mute/ban/limit 类关键词时才当禁言
+    return /\bretcode[=:]\s*100\b/i.test(s) && /\b(mute|ban|limit|forbid)\b|禁言|风控/i.test(s);
   }
 
   /** 该会话当前是否处于禁言熔断期。 */
