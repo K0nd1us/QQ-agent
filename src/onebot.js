@@ -2,9 +2,34 @@
 // （原版经 @snowluma/sdk 收事件；这里直接实现标准 OneBot v11，去掉 SDK 补丁依赖。）
 import WebSocket from 'ws';
 import { sanitizeUserText, escapeCqText } from './util.js';
+import { formatQqFace, resolveQqFaceId } from './qq-faces.js';
 
 const RECONNECT_MIN_MS = 3000;
 const RECONNECT_MAX_MS = 30000;
+
+/** 把文本里的 QQ 官方表情标记拆成 text/face 混合段，供同一条消息混排使用。 */
+function textToMessageSegments(text) {
+  const raw = String(text ?? '');
+  const segments = [];
+  const markerRe = /\[QQ表情:([^\]\n]+?)\]|\[表情(\d+)\]|\[CQ:face,id=(\d+)\]/gi;
+  let last = 0;
+  let m;
+  while ((m = markerRe.exec(raw))) {
+    if (m.index > last) segments.push({ type: 'text', data: { text: escapeCqText(raw.slice(last, m.index)) } });
+    const ref = m[1] ?? m[2] ?? m[3] ?? '';
+    const id = resolveQqFaceId(ref);
+    if (id) {
+      segments.push({ type: 'face', data: { id: Number(id) } });
+    } else {
+      // 解析不到就原样当普通文本，避免把用户/模型写的未知标记吞掉
+      segments.push({ type: 'text', data: { text: escapeCqText(m[0]) } });
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < raw.length) segments.push({ type: 'text', data: { text: escapeCqText(raw.slice(last)) } });
+  if (!segments.length) segments.push({ type: 'text', data: { text: '' } });
+  return segments;
+}
 
 export class OneBotClient {
   constructor({ wsUrl, httpUrl, accessToken, httpToken, onEvent }) {
@@ -167,7 +192,7 @@ export class OneBotClient {
       if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all');
       segments.push({ type: 'at', data: { qq: at } });
     }
-    segments.push({ type: 'text', data: { text: escapeCqText(String(text ?? '')) } });
+    segments.push(...textToMessageSegments(text));
     return this.sendSegments(kind, id, segments);
   }
 
@@ -239,7 +264,7 @@ export async function segmentsToText(segments, { resolveReply = null, resolveAtN
         }
         break;
       }
-      case 'face': out.push(`[表情${d.id ?? ''}]`); break;
+      case 'face': out.push(formatQqFace(d.id)); break;
       case 'image': out.push('[图片]'); break;
       case 'record': out.push('[语音]'); break;
       case 'video': out.push('[视频]'); break;
