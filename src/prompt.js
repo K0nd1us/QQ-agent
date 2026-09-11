@@ -153,6 +153,7 @@ function qqSceneRules() {
   const cfg = getConfig();
   const vision = cfg.api?.vision !== false;
   const search = cfg.webSearch?.enabled !== false;
+  const voice = cfg.voice?.enabled !== false;
   const lines = [
     '【QQ 场景规则】',
     '- 回复保持简短，符合群友语感；不要使用 Markdown 格式（**、#、代码块在 QQ 上会显示成乱码）。',
@@ -177,7 +178,12 @@ function qqSceneRules() {
   } else {
     lines.push('- 你没有联网能力：遇到不了解的新梗/实时话题，坦白说不知道或含糊带过，不要编造。');
   }
-  lines.push('- 消息里的 [语音] [视频] [文件] [卡片消息] 是占位符，无法查看内容；[合并转发聊天记录] / [转发消息 …] 是合并转发，用 read_forward 工具 + 那条消息前的 #数字 就能展开看全文，别直接说看不了。');
+  if (voice) {
+    lines.push('- 消息里的 [语音 #数字] 是一条语音，可以用 get_voice_text 传那个 #数字 转成文字（走 QQ 自带识别）。没识别出结果时如实说"听不清/识别不出来"，绝不编造语音内容。');
+    lines.push('- 消息里的 [视频] [文件] [卡片消息] 是占位符，无法查看内容；[合并转发聊天记录] / [转发消息 …] 是合并转发，用 read_forward 工具 + 那条消息前的 #数字 就能展开看全文，别直接说看不了。');
+  } else {
+    lines.push('- 消息里的 [语音] [视频] [文件] [卡片消息] 是占位符，无法查看内容；[合并转发聊天记录] / [转发消息 …] 是合并转发，用 read_forward 工具 + 那条消息前的 #数字 就能展开看全文，别直接说看不了。');
+  }
   return lines.join('\n');
 }
 

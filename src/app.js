@@ -447,7 +447,8 @@ export function createApp({ log = console.log } = {}) {
     if (segments) {
       text = await segmentsToText(segments, {
         resolveReply: (mid) => resolveReply(mid),
-        resolveAtName: (qq) => kind === 'group' ? resolveAtName(id, qq) : null
+        resolveAtName: (qq) => kind === 'group' ? resolveAtName(id, qq) : null,
+        messageId: event.message_id ?? null
       });
     } else {
       text = String(event.raw_message ?? event.message ?? '').trim();
