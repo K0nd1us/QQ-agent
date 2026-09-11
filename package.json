@@ -49,8 +49,9 @@
   "scripts": {
     "start": "electron .",
     "server": "node src/server.js",
-    "test": "node test/selftest.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs",
+    "test": "node test/selftest.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs && node test/test-qq-id.mjs",
     "test:prompt": "node test/test-prompt.mjs",
+    "test:qq-id": "node test/test-qq-id.mjs",
     "test:render": "node test/render-test.mjs",
     "test:scroll": "node test/scroll-test.mjs",
     "test:usage": "node test/usage-e2e.mjs"
