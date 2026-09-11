@@ -3093,6 +3093,10 @@ return `
       <div class="field"><label>QQ 硬限制切分长度（0 = 不切）</label><input type="number" id="cfg-hardsplit" min="0" value="${esc(c.send.hardSplitAt ?? 4000)}" /></div>
     </div>
 
+    <h3>语音转文字</h3>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-voice" ${c.voice?.enabled !== false ? 'checked' : ''} />
+      <label for="cfg-voice">启用 get_voice_text（走 QQ 自带识别，按需转写）</label></div>
+
     <h3>主动开话题</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-proactive" ${c.proactive.enabled ? 'checked' : ''} />
       <label for="cfg-proactive">冷场时按概率主动开话题</label></div>
@@ -4579,6 +4583,10 @@ async function saveConfig({ quiet = false } = {}) {
       maxPerHour: Number(val('#cfg-maxperhour', c.send?.maxPerHour)) || 500,
       byLengthMs: Number(val('#cfg-bylength', c.send?.byLengthMs)) || 20,
       hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0
+    };
+    patch.voice = {
+      ...(c.voice || {}),
+      enabled: chk('#cfg-voice', c.voice?.enabled !== false)
     };
     patch.proactive = {
       ...c.proactive,

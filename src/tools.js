@@ -372,6 +372,29 @@ export function buildToolDefs() {
       }
     },
     {
+      name: 'get_voice_text',
+      description: '把一条语音消息转成文字（调用 QQ 自带语音识别）。消息文本里出现 [语音 #数字] 时用它；转写失败或没有识别结果时会说明原因，不要编造语音内容。',
+      parameters: {
+        type: 'object',
+        properties: { messageId: { type: ['integer', 'string'], description: '语音消息的 QQ 消息 id（聊天记录里 [语音 #数字] 里的数字）' } },
+        required: ['messageId']
+      },
+      async execute(ctx, args) {
+        try {
+          const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
+          if (!entry) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+          const hasVoice = (entry.media || []).some((m) => m.kind === 'record') || /\[语音/.test(entry.text || '');
+          if (!hasVoice) return err(`消息 ${args.messageId} 不是语音消息`);
+          const data = await ctx.onebot.getVoiceText(args.messageId);
+          const text = String(data?.text ?? '').trim();
+          if (!text) return ok({ messageId: String(args.messageId), text: '', note: '这条语音没有识别出文字（可能是 QQ 未转写、时长过短/过长，或为纯音乐）。不要编造内容。' });
+          return ok({ messageId: String(args.messageId), text });
+        } catch (error) {
+          return err(`语音转文字失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
       name: 'memory_append',
       description: '记一条对群友的长期印象（下次运行会自动看到）。只记"以后和这个人打交道时用得上"的稳定印象：他的身份/关系、说话风格、爱玩的梗、雷点、常聊话题、别踩的坑。太临时的事情不要记。userId 必须填对方的 QQ 号（不知道就先调 get_active_members / get_recent_messages 查）；target 填备注名/群名片/昵称，用于展示。',
       parameters: {

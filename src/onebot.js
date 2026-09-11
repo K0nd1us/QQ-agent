@@ -200,6 +200,14 @@ export class OneBotClient {
     return this.call('get_msg', { message_id: Number(messageId) });
   }
 
+  /**
+   * 语音转文字（QQ 自带识别，走 SnowLuma 的 fetch_ptt_text / get_ptt_text / get_record_text）。
+   * 返回 { text }。部分语音（如 QQ 未识别、老语音、时长过长）可能没有转写结果。
+   */
+  async getVoiceText(messageId) {
+    return this.call('fetch_ptt_text', { message_id: String(messageId) });
+  }
+
   async getGroupInfo(groupId) {
     return this.call('get_group_info', { group_id: Number(groupId) });
   }
@@ -222,9 +230,11 @@ export function forwardIdFromData(d) {
  * resolveReply: async (mid) => { sender, text } | null —— 解析引用原文。
  * resolveAtName: async (qq) => string | null —— 把 @ 的 QQ 号解析成群名片。
  */
-export async function segmentsToText(segments, { resolveReply = null, resolveAtName = null, includeReply = true } = {}) {
+export async function segmentsToText(segments, { resolveReply = null, resolveAtName = null, includeReply = true, messageId = null } = {}) {
   if (typeof segments === 'string') return sanitizeUserText(segments.trim());
   const out = [];
+  // 语音段带消息 id，模型才能用 get_voice_text 按需转写（QQ 自带识别）
+  const midHint = messageId !== null && messageId !== undefined && String(messageId) !== '' ? ` #${messageId}` : '';
   for (const seg of segments ?? []) {
     const d = seg?.data ?? {};
     switch (seg?.type) {
@@ -241,7 +251,7 @@ export async function segmentsToText(segments, { resolveReply = null, resolveAtN
       }
       case 'face': out.push(`[表情${d.id ?? ''}]`); break;
       case 'image': out.push('[图片]'); break;
-      case 'record': out.push('[语音]'); break;
+      case 'record': out.push(`[语音${midHint}]`); break;
       case 'video': out.push('[视频]'); break;
       case 'file': out.push(`[文件${d.name ?? ''}]`); break;
       case 'reply': {
@@ -282,6 +292,9 @@ export function extractMediaFromSegments(segments) {
     const d = seg.data ?? {};
     if (seg.type === 'image') {
       media.push({ kind: 'image', file: String(d.file ?? ''), url: String(d.url ?? ''), summary: String(d.summary ?? '') });
+    } else if (seg.type === 'record') {
+      // 只留定位信息，不下载音频；转写走 get_voice_text → fetch_ptt_text
+      media.push({ kind: 'record', file: String(d.file ?? ''), url: String(d.url ?? '') });
     } else if (seg.type === 'face') {
       media.push({ kind: 'face', faceId: String(d.id ?? '') });
     }

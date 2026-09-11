@@ -465,9 +465,11 @@ export class Orchestrator {
     const visionEnabled = cfg.api.vision !== false
       && modelImageVerdict(cfg.api.provider, cfg.api.model) !== 'no-vision';
     const searchEnabled = cfg.webSearch?.enabled !== false;
+    const voiceEnabled = cfg.voice?.enabled !== false;
     const toolDefs = this.toolDefs.filter((d) => {
       if (!visionEnabled && (d.name === 'get_message_images' || d.name === 'get_sticker_image')) return false;
       if (!searchEnabled && (d.name === 'web_search' || d.name === 'web_fetch')) return false;
+      if (!voiceEnabled && d.name === 'get_voice_text') return false;
       return true;
     });
     const openAiTools = toOpenAiTools(toolDefs);

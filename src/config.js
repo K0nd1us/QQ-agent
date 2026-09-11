@@ -100,6 +100,10 @@ export const DEFAULT_CONFIG = {
       timeoutMs: 20000
     }
   },
+  // 语音转文字（走 SnowLuma fetch_ptt_text，即 QQ 自带识别；按需转写）
+  voice: {
+    enabled: true
+  },
   // 安全例外（默认全部关闭）
   security: {
     allowPrivateImageHosts: false           // true 时图片下载允许内网地址（仅本地测试/自建图床）
