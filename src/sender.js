@@ -12,13 +12,70 @@ const DEFAULT_MAX_PER_MINUTE = DEFAULT_CONFIG.send.maxPerMinute;
 const DEFAULT_MAX_PER_HOUR = DEFAULT_CONFIG.send.maxPerHour;
 
 export class SendQueue {
-  constructor({ onebot, store, onSent = null }) {
+  constructor({ onebot, store, onSent = null, onBanned = null }) {
     this.onebot = onebot;
     this.store = store;
     this.onSent = onSent;
+    this.onBanned = onBanned;     // 被禁言/风控时上报（供 UI 提示）
     this.chains = new Map();      // chatKey -> enqueue fn
     this.minuteTimes = new Map(); // chatKey -> [ts]
     this.hourTimes = new Map();   // chatKey -> [ts]
+    this.bannedUntil = new Map(); // chatKey -> 解禁时间戳（熔断）
+  }
+
+  /**
+   * 识别 QQ 侧“禁止发言”类错误（账号风控 / 群内禁言 / 群全员禁言）。
+   * SnowLuma 的原文形如：
+   *   send group message failed: Ban state forbit write req   （底层 packet code=-10203）
+   * 其它实现可能回 retcode=100 或“禁言/风控/限制”等文案。
+   */
+  static isBannedError(error) {
+    const s = String(error?.message ?? error ?? '');
+    return /ban state|forbit write|retcode=100\b|retcode:\s*100\b|禁言|风控|被限制|发送失败.*限制/i.test(s);
+  }
+
+  /** 该会话当前是否处于禁言熔断期。 */
+  banInfo(chatKey) {
+    const until = this.bannedUntil.get(chatKey);
+    if (!until || until <= Date.now()) return null;
+    return { until, remainMs: until - Date.now() };
+  }
+
+  /** 清掉过期/指定的熔断（用户手动重试时调用）。 */
+  clearBan(chatKey) {
+    this.bannedUntil.delete(chatKey);
+  }
+
+  /** 当前处于禁言熔断期的会话列表（供 /api/status 与控制台提示）。 */
+  listBans() {
+    const now = Date.now();
+    const out = [];
+    for (const [chatKey, until] of this.bannedUntil) {
+      if (until <= now) continue;
+      out.push({ chatKey, until, remainMs: until - now });
+    }
+    return out.sort((a, b) => b.until - a.until);
+  }
+
+  #checkBan(chatKey) {
+    const info = this.banInfo(chatKey);
+    if (!info) return;
+    const min = Math.max(1, Math.round(info.remainMs / 60000));
+    throw new Error(`本会话被 QQ 限制发言（禁言/风控），已暂停发送，约 ${min} 分钟后自动重试`);
+  }
+
+  /** 发送失败且判定为禁言时设置熔断。 */
+  #handleSendResult(chatKey, error) {
+    if (!error) return;
+    if (!SendQueue.isBannedError(error)) return;
+    const cooldownMs = Math.max(60_000, Number(getConfig().send?.banCooldownMs) || 30 * 60 * 1000);
+    const until = Date.now() + cooldownMs;
+    const first = !this.bannedUntil.has(chatKey);
+    this.bannedUntil.set(chatKey, until);
+    if (first) {
+      this.onBanned?.({ chatKey, until, reason: String(error?.message ?? error) });
+      console.warn(`[sender] ${chatKey} 被 QQ 限制发言，暂停发送到 ${new Date(until).toLocaleTimeString('zh-CN', { hour12: false })}`);
+    }
   }
 
   #chain(chatKey) {
@@ -84,16 +141,22 @@ export class SendQueue {
       const isLast = i === parts.length - 1;
       const gap = this.#gap(text, isLast);
       promises.push(chain(async () => {
+        this.#checkBan(chatKey);
         this.#checkRate(chatKey);
         if (gap > 0) await sleep(gap);
-        const data = await this.onebot.sendText(kind, id, text, {
-          replyToMessageId: i === 0 ? options.replyToMessageId : null, // 引用挂在第一条上：回的就是那条
-          atUserId: i === 0 ? options.atUserId : null
-        });
-        const ts = Date.now();
-        this.store.appendSelf(chatKey, { text, ts, mid: data?.message_id ?? null });
-        this.onSent?.({ chatKey, text, messageId: data?.message_id ?? null });
-        return { text, messageId: data?.message_id ?? null, at: formatClockTime(ts) };
+        try {
+          const data = await this.onebot.sendText(kind, id, text, {
+            replyToMessageId: i === 0 ? options.replyToMessageId : null, // 引用挂在第一条上：回的就是那条
+            atUserId: i === 0 ? options.atUserId : null
+          });
+          const ts = Date.now();
+          this.store.appendSelf(chatKey, { text, ts, mid: data?.message_id ?? null });
+          this.onSent?.({ chatKey, text, messageId: data?.message_id ?? null });
+          return { text, messageId: data?.message_id ?? null, at: formatClockTime(ts) };
+        } catch (error) {
+          this.#handleSendResult(chatKey, error);
+          throw error;
+        }
       }));
     }
 
@@ -121,16 +184,22 @@ export class SendQueue {
     const [kind, id] = String(chatKey).split(':');
     const chain = this.#chain(chatKey);
     return chain(async () => {
+      this.#checkBan(chatKey);
       this.#checkRate(chatKey);
       await sleep(randInt(600, 1500)); // 发表情前真人式的短暂停顿
-      const data = await this.onebot.sendSticker(kind, id, sticker.url, {
-        replyToMessageId: options.replyToMessageId ?? null,
-        atUserId: options.atUserId ?? null
-      });
-      const ts = Date.now();
-      this.store.appendSelf(chatKey, { text: `[表情包:${sticker.desc || sticker.localNote || sticker.id}]`, ts, mid: data?.message_id ?? null });
-      this.onSent?.({ chatKey, text: `[表情包]`, messageId: data?.message_id ?? null, sticker: sticker.id });
-      return { message_id: data?.message_id ?? null };
+      try {
+        const data = await this.onebot.sendSticker(kind, id, sticker.url, {
+          replyToMessageId: options.replyToMessageId ?? null,
+          atUserId: options.atUserId ?? null
+        });
+        const ts = Date.now();
+        this.store.appendSelf(chatKey, { text: `[表情包:${sticker.desc || sticker.localNote || sticker.id}]`, ts, mid: data?.message_id ?? null });
+        this.onSent?.({ chatKey, text: `[表情包]`, messageId: data?.message_id ?? null, sticker: sticker.id });
+        return { message_id: data?.message_id ?? null };
+      } catch (error) {
+        this.#handleSendResult(chatKey, error);
+        throw error;
+      }
     });
   }
 
@@ -139,13 +208,19 @@ export class SendQueue {
     const [kind, id] = String(chatKey).split(':');
     const chain = this.#chain(chatKey);
     return chain(async () => {
+      this.#checkBan(chatKey);
       await sleep(randInt(300, 900));
-      const data = await this.onebot.sendPoke(kind, id, targetUserId);
-      const ts = Date.now();
-      const target = kind === 'group' && targetUserId != null ? ` ${targetUserId}` : '对方';
-      this.store.appendSelf(chatKey, { text: `[拍一拍] 你拍了拍${target}`, ts, mid: data?.message_id ?? null });
-      this.onSent?.({ chatKey, text: `[拍一拍]${target}`, messageId: null });
-      return data;
+      try {
+        const data = await this.onebot.sendPoke(kind, id, targetUserId);
+        const ts = Date.now();
+        const target = kind === 'group' && targetUserId != null ? ` ${targetUserId}` : '对方';
+        this.store.appendSelf(chatKey, { text: `[拍一拍] 你拍了拍${target}`, ts, mid: data?.message_id ?? null });
+        this.onSent?.({ chatKey, text: `[拍一拍]${target}`, messageId: null });
+        return data;
+      } catch (error) {
+        this.#handleSendResult(chatKey, error);
+        throw error;
+      }
     });
   }
 }

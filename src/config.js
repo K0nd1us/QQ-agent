@@ -21,6 +21,7 @@ export const DEFAULT_CONFIG = {
     model: '',                              // UI 里选择/填写
     provider: '',                           // 当前模型所属提供商（多提供商目录的选中项）
     vision: true,                           // 模型是否支持图片输入（关掉则移除看图工具）
+    thinking: true,                         // 思考开关：开=允许推理并展示思维链；关=请求带 enable_thinking=false，不捕获思维链
     temperature: 0.8,
     maxRounds: 12,                          // 单次运行的最多工具轮数
     timeoutMs: 180000,
@@ -138,6 +139,7 @@ export const DEFAULT_CONFIG = {
     byLengthMs: 20,         // 按字数附加的间隔（毫秒/字）
     maxPerMinute: 80,
     maxPerHour: 500,
+    banCooldownMs: 1800000, // 被 QQ 禁言/风控时暂停该会话发送的时长（默认 30 分钟）
     hardSplitAt: 4000       // QQ 硬限制切分（0 = 不限制）
   },
   // 主动开话题（可选）
@@ -186,6 +188,10 @@ export const DEFAULT_CONFIG = {
   // 被屏蔽群员的消息在入口处直接丢弃——不存档、不触发会话、不作为提示词背景。
   // 机器人自己的消息不受影响。仅群聊有意义（私聊要屏蔽请直接用白名单/黑名单）。
   blocklist: {},
+  // 预算保险丝：今日估算成本达到上限（元）时自动暂停；0 = 不限制
+  budget: {
+    dailyCostYuan: 0
+  },
   // 记忆自动整理：条数超阈值且距上次超过冷却时间时，在运行结束后后台合并/去重/删过时
   memory: {
     consolidateEnabled: true,
