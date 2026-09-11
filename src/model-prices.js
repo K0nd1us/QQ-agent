@@ -26,63 +26,96 @@
 
 export const OFFICIAL_PRICES = {
   // ══ DeepSeek ══
-  // 来源：DeepSeek 官方中文文档 https://api-docs.deepseek.com/zh-cn/quick_start/pricing（2026-09-10 文档+API 实测双重核对）
-  // 注意：官方直接以人民币标价，这里原样照录，未做任何汇率换算。
-  // 2026-09-10 实测补充：官方 /models 仅列 deepseek-flash、deepseek-v4-pro 两个，文档滞后（仍写仅 vision-exp 收图，
-  // 实测 flash/chat/reasoner 均支持图片输入；v4-pro 实测拒图）。上下文 1M，输出最大 384K。
-  // 峰谷规则（官方原文）：高峰为北京时间周一至周五 9:00-12:00、14:00-18:00，其余为闲时；闲时价 = 高峰价的一半。
-  // 下表的 in/out/cached 取**闲时**价（即日常大多数时间的实际费率）。
-  // v4-flash 自 2026-09 起支持图片输入（视觉能力并入主模型），图片计费沿用 vision-exp 的 384 token/张 封顶规则
-  'deepseek-v4-flash': {
-    in: 1.5, out: 4.5, cached: 0.05,
-    peak: { in: 3, out: 9, cached: 0.10 },
+  // 来源：官方中文文档 https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+  //       + https://api-docs.deepseek.com/zh-cn/guides/vision
+  //       + 2026-09-11 官方 API 全量实测（模型清单/文本/图片/工具/JSON/音频/图片token计量）
+  // 官方直接以人民币标价，原样照录，未做汇率换算。
+  //
+  // ── 2026-09-11 实测结论（文档多处滞后，以下以实测为准）──
+  // · 官方 /models 只返回两个：deepseek-flash、deepseek-v4-pro。
+  //   旧名 deepseek-v4-flash / deepseek-v4-flash-vision-exp 仍可调用，但底座已下线，
+  //   由 DeepSeek-V4.1-Flash 承接并按 Flash 价计费；deepseek-chat / deepseek-reasoner
+  //   实测同样回落 Flash 档（响应体 model 字段均回显 deepseek-flash）。
+  // · 图像理解仅 Flash 支持；v4-pro 实测带图返回"无法查看图片内容，请提供文字描述"。
+  // · 无音频/视频输入：input_audio 内容块直接 400（unknown variant）。
+  // · 上下文 1M；输出上限 384K；并发 flash 2500 / v4-pro 500。
+  // · ⚠️ v4-pro 计划下线：北京时间 2026-09-14 12:00 后至 V4.1-Pro 上线前，
+  //   deepseek-v4-pro 的请求全部路由到 V4.1-Flash，并按 Flash 价计费。
+  //
+  // ── 价格（元 / 百万 token；闲时 = 高峰的一半）──
+  //   高峰时段：北京时间周一至周五 9:00-12:00、14:00-18:00，其余为闲时。
+  //   下表 in/out/cached 取闲时价（日常多数时间的实际费率）。
+  //
+  // ── 图片计费口径（已按官方文档 + 实测校准，纠正旧表中的 384 封顶错误）──
+  //   每张图自动缩放：<约 544×544 保持长宽比放大；更大则缩到约 1300×1300 等效总像素。
+  //   单图 token 上限 **1024**（实测：420×160≈188、800×800≈432、2048²与4096²均≈1004）。
+  //   多图各自独立计算，无额外合并成本。detail=low 时缩到 512×512，更快更省。
+  //   格式 JPEG/PNG/GIF/WebP；单请求最多 600 张；图片只能出现在 user 消息中。
+  'deepseek-flash': {
+    in: 1, out: 4, cached: 0.02,
+    peak: { in: 2, out: 8, cached: 0.04 },
     image: {
       mode: 'capped',
-      maxTokensPerImage: 384,
-      note: '自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关'
+      maxTokensPerImage: 1024,
+      note: '自动缩放到约 1300×1300 等效总像素后封顶 1024 token/张（实测 420×160≈188、800×800≈432、≥2048²≈1004）；detail=low 缩到 512×512 更省'
     },
-    note: '闲时价；高峰翻倍；支持图片输入（384 token/张封顶）',
+    note: '闲时价；高峰翻倍；DeepSeek-V4.1-Flash；支持思考/非思考双模式、图片理解、工具调用、JSON 输出；1M 上下文 / 384K 输出',
+    src: 'official'
+  },
+  // 旧模型名：底座已下线，请求由 V4.1-Flash 承接，按 Flash 价计费
+  'deepseek-v4-flash': {
+    in: 1, out: 4, cached: 0.02,
+    peak: { in: 2, out: 8, cached: 0.04 },
+    image: {
+      mode: 'capped',
+      maxTokensPerImage: 1024,
+      note: '同 deepseek-flash：缩放后封顶 1024 token/张'
+    },
+    note: '旧模型名（底座已下线，由 V4.1-Flash 承接），按 Flash 价计费；图片/工具/JSON 均可用',
+    src: 'official'
+  },
+  'deepseek-v4-flash-vision-exp': {
+    in: 1, out: 4, cached: 0.02,
+    peak: { in: 2, out: 8, cached: 0.04 },
+    image: {
+      mode: 'capped',
+      maxTokensPerImage: 1024,
+      note: '同 deepseek-flash：缩放后封顶 1024 token/张'
+    },
+    note: '旧视觉模型名（已下线，由 V4.1-Flash 承接），按 Flash 价计费',
     src: 'official'
   },
   // ⚠️ -0731 是日期快照，能力冻结在 07-31，不随主模型获得图片输入——勿加 image 计费
-  'deepseek-v4-flash-0731': { in: 1.5, out: 4.5, cached: 0.05, peak: { in: 3, out: 9, cached: 0.10 }, note: '闲时价；高峰翻倍', src: 'official' },
-  // 中转站常见别名（如 A6API 的 deepseek-flash）→ 按 v4-flash 费率折算
-  'deepseek-flash': {
-    in: 1.5, out: 4.5, cached: 0.05,
-    peak: { in: 3, out: 9, cached: 0.10 },
-    image: {
-      mode: 'capped',
-      maxTokensPerImage: 384,
-      note: '自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关'
-    },
-    note: '中转站别名，按 deepseek-v4-flash 闲时价折算；高峰翻倍',
-    src: 'derived'
-  },
-  // 视觉版：费率同 Flash，另需按图片数量加算 token。
-  // 官方原文（api-docs.deepseek.com/zh-cn/guides/vision#token-usage）：
-  //   图片会被自动缩放 —— 小于约 384×384 的放大，更大的缩小到约 800×800；
-  //   每张图 token 上限 384（所以 2000×2000 和 5000×5000 消耗一样）；
-  //   多张图各自独立计算。detail=low 时缩放到 512×512，更省。
-  // 结论：图片本身极便宜（单张约 ¥0.0006 闲时），成本大头仍是文本。
-  'deepseek-v4-flash-vision-exp': {
-    in: 1.5, out: 4.5, cached: 0.05,
-    peak: { in: 3, out: 9, cached: 0.10 },
-    image: {
-      mode: 'capped',
-      maxTokensPerImage: 384,
-      note: '自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关'
-    },
-    note: '视觉版，费率同 Flash；图片另按 384 token/张 上限计费',
+  'deepseek-v4-flash-0731': { in: 1, out: 4, cached: 0.02, peak: { in: 2, out: 8, cached: 0.04 }, note: '闲时价；高峰翻倍；日期快照版，无图片输入', src: 'official' },
+  // 旧别名实测均回落 Flash 档：deepseek-chat 走非思考模式，deepseek-reasoner 走思考模式
+  'deepseek-chat': {
+    in: 1, out: 4, cached: 0.02,
+    peak: { in: 2, out: 8, cached: 0.04 },
+    image: { mode: 'capped', maxTokensPerImage: 1024, note: '同 deepseek-flash：缩放后封顶 1024 token/张' },
+    note: '旧别名，实测回落 deepseek-flash（非思考模式），按 Flash 价计费；支持图片输入',
     src: 'official'
   },
-  'deepseek-v4-pro': { in: 4.5, out: 13.5, cached: 0.15, peak: { in: 9, out: 27, cached: 0.30 }, note: '闲时价；高峰翻倍；纯文本——2026-09-10 实测拒绝图片输入（明文报"无法查看图片"）', src: 'official' },
-  'deepseek-v4-pro-0813': { in: 4.5, out: 13.5, cached: 0.15, peak: { in: 9, out: 27, cached: 0.30 }, note: '闲时价；高峰翻倍；纯文本', src: 'official' },
-  // ⚠️ 2026-09-10 官方 API 实测：chat/reasoner 旧别名仍可用且**均支持图片输入**（读图测试通过），
-  // 官方文档（滞后）声称"仅 vision-exp 接受图片"——以实测为准。图片计费同 384 token/张 封顶。
-  'deepseek-chat': { in: 1.5, out: 4.5, cached: 0.05, image: { mode: 'capped', maxTokensPerImage: 384, note: '自动缩放到约 800×800 后按 384 token/张 封顶' }, note: '映射到 V4-Flash 档；实测支持图片输入', src: 'official' },
-  'deepseek-reasoner': { in: 4.5, out: 13.5, cached: 0.15, image: { mode: 'capped', maxTokensPerImage: 384, note: '自动缩放到约 800×800 后按 384 token/张 封顶' }, note: '映射到 V4-Pro 档；实测支持图片输入', src: 'official' },
-  'deepseek-v3.1-terminus': { in: 1.5, out: 4.5, cached: 0.05, note: '旧代，按现价近似', src: 'official' },
-  'deepseek-r1-0528': { in: 4.5, out: 13.5, cached: 0.15, note: '旧代，按现价近似', src: 'official' },
+  'deepseek-reasoner': {
+    in: 1, out: 4, cached: 0.02,
+    peak: { in: 2, out: 8, cached: 0.04 },
+    image: { mode: 'capped', maxTokensPerImage: 1024, note: '同 deepseek-flash：缩放后封顶 1024 token/张' },
+    note: '旧别名，实测回落 deepseek-flash（思考模式），按 Flash 价计费；支持图片输入',
+    src: 'official'
+  },
+  'deepseek-v4-pro': {
+    in: 4.5, out: 13.5, cached: 0.15,
+    peak: { in: 9, out: 27, cached: 0.30 },
+    note: '闲时价；高峰翻倍；纯文本（实测带图回"无法查看图片"）；⚠️ 2026-09-14 12:00 后路由到 V4.1-Flash 并按 Flash 价计费',
+    src: 'official'
+  },
+  'deepseek-v4-pro-0813': {
+    in: 4.5, out: 13.5, cached: 0.15,
+    peak: { in: 9, out: 27, cached: 0.30 },
+    note: '闲时价；高峰翻倍；纯文本；日期快照版',
+    src: 'official'
+  },
+  'deepseek-v3.1-terminus': { in: 1, out: 4, cached: 0.02, peak: { in: 2, out: 8, cached: 0.04 }, note: '旧代，取下线价近似（原价 1.5/4.5）', src: 'derived' },
+  'deepseek-r1-0528': { in: 4.5, out: 13.5, cached: 0.15, note: '旧代，按 v4-pro 现价近似', src: 'derived' },
 
   // ══ 智谱 Z.ai / GLM ══
   // 来源：智谱官方价格页 https://open.bigmodel.cn/pricing（2026-09-03 直取），人民币原价。

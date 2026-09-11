@@ -1310,6 +1310,8 @@ refs:
     assert.equal(normalizePriceFeed('not-json-object'), null, '非对象载荷应判 null');
 
     // ③ 覆盖语义：远程条目按 id 赢内置表；其余内置条目还在
+    // 先记下内置价（不写死数字：官方调价后测试不该跟着改）
+    const builtinFlashIn = resolveOfficialPrice('deepseek-v4-flash').in;
     setRemotePrices({ 'deepseek-v4-flash': { in: 111, out: 222, cached: 0.5, src: 'remote' } });
     const overridden = resolveOfficialPrice('deepseek-v4-flash');
     assert.equal(overridden.in, 111, '远程条目应覆盖内置表');
@@ -1317,7 +1319,7 @@ refs:
     const listed = listOfficialPrices();
     assert.ok(listed.find((x) => x.id === 'deepseek-v4-flash')?.remote === true, '列表应标记 remote:true');
     setRemotePrices({});   // 还原：不能污染后面的成本断言
-    assert.equal(resolveOfficialPrice('deepseek-v4-flash').in, 1.5, '清空后应回退内置价');
+    assert.equal(resolveOfficialPrice("deepseek-v4-flash").in, builtinFlashIn, "清空后应回退内置价");
 
     // ④ 真拉一次：起一个临时 HTTP 服务器当"用户自托管价格表"
     const feedServer = http.createServer((req, res) => {

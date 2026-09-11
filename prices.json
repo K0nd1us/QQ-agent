@@ -1,68 +1,102 @@
 {
-  "updated": "2026-09-10",
+  "updated": "2026-09-11",
   "comment": "qq-agent 远程价格表。单位：元/百万 token。条目字段：in/out（必填数字）、cached（可 null）、peak/image/note/src（可选）。",
   "prices": {
-    "deepseek-v4-flash": {
-      "in": 1.5,
-      "out": 4.5,
-      "cached": 0.05,
+    "deepseek-flash": {
+      "in": 1,
+      "out": 4,
+      "cached": 0.02,
       "peak": {
-        "in": 3,
-        "out": 9,
-        "cached": 0.1
+        "in": 2,
+        "out": 8,
+        "cached": 0.04
       },
       "image": {
         "mode": "capped",
-        "maxTokensPerImage": 384,
-        "note": "自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关"
+        "maxTokensPerImage": 1024,
+        "note": "自动缩放到约 1300×1300 等效总像素后封顶 1024 token/张（实测 420×160≈188、800×800≈432、≥2048²≈1004）；detail=low 缩到 512×512 更省"
       },
-      "note": "闲时价；高峰翻倍；支持图片输入（384 token/张封顶）",
+      "note": "闲时价；高峰翻倍；DeepSeek-V4.1-Flash；支持思考/非思考双模式、图片理解、工具调用、JSON 输出；1M 上下文 / 384K 输出",
+      "src": "official"
+    },
+    "deepseek-v4-flash": {
+      "in": 1,
+      "out": 4,
+      "cached": 0.02,
+      "peak": {
+        "in": 2,
+        "out": 8,
+        "cached": 0.04
+      },
+      "image": {
+        "mode": "capped",
+        "maxTokensPerImage": 1024,
+        "note": "同 deepseek-flash：缩放后封顶 1024 token/张"
+      },
+      "note": "旧模型名（底座已下线，由 V4.1-Flash 承接），按 Flash 价计费；图片/工具/JSON 均可用",
+      "src": "official"
+    },
+    "deepseek-v4-flash-vision-exp": {
+      "in": 1,
+      "out": 4,
+      "cached": 0.02,
+      "peak": {
+        "in": 2,
+        "out": 8,
+        "cached": 0.04
+      },
+      "image": {
+        "mode": "capped",
+        "maxTokensPerImage": 1024,
+        "note": "同 deepseek-flash：缩放后封顶 1024 token/张"
+      },
+      "note": "旧视觉模型名（已下线，由 V4.1-Flash 承接），按 Flash 价计费",
       "src": "official"
     },
     "deepseek-v4-flash-0731": {
-      "in": 1.5,
-      "out": 4.5,
-      "cached": 0.05,
+      "in": 1,
+      "out": 4,
+      "cached": 0.02,
       "peak": {
-        "in": 3,
-        "out": 9,
-        "cached": 0.1
+        "in": 2,
+        "out": 8,
+        "cached": 0.04
       },
-      "note": "闲时价；高峰翻倍",
+      "note": "闲时价；高峰翻倍；日期快照版，无图片输入",
       "src": "official"
     },
-    "deepseek-flash": {
-      "in": 1.5,
-      "out": 4.5,
-      "cached": 0.05,
+    "deepseek-chat": {
+      "in": 1,
+      "out": 4,
+      "cached": 0.02,
       "peak": {
-        "in": 3,
-        "out": 9,
-        "cached": 0.1
+        "in": 2,
+        "out": 8,
+        "cached": 0.04
       },
       "image": {
         "mode": "capped",
-        "maxTokensPerImage": 384,
-        "note": "自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关"
+        "maxTokensPerImage": 1024,
+        "note": "同 deepseek-flash：缩放后封顶 1024 token/张"
       },
-      "note": "中转站别名，按 deepseek-v4-flash 闲时价折算；高峰翻倍",
-      "src": "derived"
+      "note": "旧别名，实测回落 deepseek-flash（非思考模式），按 Flash 价计费；支持图片输入",
+      "src": "official"
     },
-    "deepseek-v4-flash-vision-exp": {
-      "in": 1.5,
-      "out": 4.5,
-      "cached": 0.05,
+    "deepseek-reasoner": {
+      "in": 1,
+      "out": 4,
+      "cached": 0.02,
       "peak": {
-        "in": 3,
-        "out": 9,
-        "cached": 0.1
+        "in": 2,
+        "out": 8,
+        "cached": 0.04
       },
       "image": {
         "mode": "capped",
-        "maxTokensPerImage": 384,
-        "note": "自动缩放到约 800×800 后按 384 token/张 封顶；与原始尺寸无关"
+        "maxTokensPerImage": 1024,
+        "note": "同 deepseek-flash：缩放后封顶 1024 token/张"
       },
-      "note": "视觉版，费率同 Flash；图片另按 384 token/张 上限计费",
+      "note": "旧别名，实测回落 deepseek-flash（思考模式），按 Flash 价计费；支持图片输入",
       "src": "official"
     },
     "deepseek-v4-pro": {
@@ -74,7 +108,7 @@
         "out": 27,
         "cached": 0.3
       },
-      "note": "闲时价；高峰翻倍",
+      "note": "闲时价；高峰翻倍；纯文本（实测带图回\"无法查看图片\"）；⚠️ 2026-09-14 12:00 后路由到 V4.1-Flash 并按 Flash 价计费",
       "src": "official"
     },
     "deepseek-v4-pro-0813": {
@@ -86,36 +120,27 @@
         "out": 27,
         "cached": 0.3
       },
-      "note": "闲时价；高峰翻倍",
-      "src": "official"
-    },
-    "deepseek-chat": {
-      "in": 1.5,
-      "out": 4.5,
-      "cached": 0.05,
-      "note": "映射到 V4-Flash 档",
-      "src": "official"
-    },
-    "deepseek-reasoner": {
-      "in": 4.5,
-      "out": 13.5,
-      "cached": 0.15,
-      "note": "映射到 V4-Pro 档",
+      "note": "闲时价；高峰翻倍；纯文本；日期快照版",
       "src": "official"
     },
     "deepseek-v3.1-terminus": {
-      "in": 1.5,
-      "out": 4.5,
-      "cached": 0.05,
-      "note": "旧代，按现价近似",
-      "src": "official"
+      "in": 1,
+      "out": 4,
+      "cached": 0.02,
+      "peak": {
+        "in": 2,
+        "out": 8,
+        "cached": 0.04
+      },
+      "note": "旧代，取下线价近似（原价 1.5/4.5）",
+      "src": "derived"
     },
     "deepseek-r1-0528": {
       "in": 4.5,
       "out": 13.5,
       "cached": 0.15,
-      "note": "旧代，按现价近似",
-      "src": "official"
+      "note": "旧代，按 v4-pro 现价近似",
+      "src": "derived"
     },
     "glm-5.3": {
       "in": 8,
