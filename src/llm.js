@@ -144,6 +144,9 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   }
   const temp = temperature === null ? (api.temperature ?? 0.8) : temperature;
   if (temp !== null && temp !== undefined && Number.isFinite(Number(temp))) body.temperature = Number(temp);
+  // 思考开关：关闭时显式告诉端点别推理（Qwen3/GLM/DeepSeek 等混合推理模型支持；
+  // 不支持的端点会忽略未知字段）。开启时不额外传参，保持端点默认行为。
+  if (api.thinking === false) body.enable_thinking = false;
 
   const controller = new AbortController();
   const timeoutMs = Math.max(5000, Number(api.timeoutMs) || 180000);
@@ -177,11 +180,39 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   if (!choice) throw new Error(`模型 API 响应缺少 choices：${JSON.stringify(data).slice(0, 300)}`);
   return {
     message: choice.message ?? {},
+    reasoning: extractReasoning(choice.message ?? {}),
     finishReason: choice.finish_reason ?? null,
     usage: data.usage ?? null,
     model: data.model ?? api.model,
     raw: data
   };
+}
+
+/**
+ * 提取推理模型返回的思维链。
+ * 不同端点字段名不同（reasoning_content 最常见，也有 reasoning / thinking / reasoning_details），
+ * 有的把内容放在 message.content 数组的 reasoning 类型块里。拿不到就返回空串。
+ */
+export function extractReasoning(message) {
+  if (!message || typeof message !== 'object') return '';
+  for (const key of ['reasoning_content', 'reasoning', 'thinking']) {
+    const value = message[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    if (value && typeof value === 'object' && typeof value.content === 'string' && value.content.trim()) return value.content;
+  }
+  if (Array.isArray(message.reasoning_details)) {
+    const joined = message.reasoning_details
+      .map((d) => (typeof d === 'string' ? d : (d?.text || d?.content || '')))
+      .filter(Boolean).join('\n');
+    if (joined.trim()) return joined;
+  }
+  if (Array.isArray(message.content)) {
+    const joined = message.content
+      .filter((p) => p && (p.type === 'reasoning' || p.type === 'thinking') && typeof p.text === 'string')
+      .map((p) => p.text).join('\n');
+    if (joined.trim()) return joined;
+  }
+  return '';
 }
 
 /** 获取模型列表（GET /models）。返回 [{ id }]；失败抛错。 */

@@ -12,7 +12,7 @@ import { getConfig, storeConfigForChat } from './config.js';
 import { vendorOfConfig } from './model-prices.js';
 import { sleep, randInt, createEventBus, todayKey } from './util.js';
 import { buildSystemPrompt, buildUserPrompt, resolveContextTier } from './prompt.js';
-import { chatCompletion, chatCompletionWithRetry, addUsage, isRetryableError } from './llm.js';
+import { chatCompletion, chatCompletionWithRetry, addUsage, isRetryableError, estimateCost } from './llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool } from './tools.js';
 import { modelImageVerdict } from './vision-scan.js';
 import { currentProviders } from './providers.js';
@@ -207,6 +207,13 @@ export class Orchestrator {
       return;
     }
 
+    // 预算保险丝：今日成本达到上限 → 自动暂停，不再发起任何 LLM 调用
+    if (this.overBudget()) {
+      if (!this.paused) this.setPaused(true, 'budget');
+      if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', '预算已达上限');
+      return;
+    }
+
     // 全局并发限制：满了就稍后重试
     if (this.runningChats.size >= Math.max(1, Number(getConfig().maxConcurrentRuns) || 2)) {
       if (waitingSessionId) {
@@ -360,6 +367,11 @@ export class Orchestrator {
 
     // drain：运行期间来的新消息 → 再次新开会话处理（这是"确保看到所有发言"的关键）
     if (!this.aborted && !this.paused) {
+      // 本次运行刚花了钱：结束后再查一次预算，超限就地熔断
+      if (this.overBudget()) {
+        this.setPaused(true, 'budget');
+        return;
+      }
       const unread = this.store.unreadCount(chatKey);
       if (unread > 0) {
         const drainDelay = Math.max(200, Number(getConfig().drainDelayMs) || 1200);
@@ -515,7 +527,12 @@ export class Orchestrator {
         raw: response.raw ?? null
       };
       messages.push(assistantEntry);
-      session.messages.push(structuredClone(assistantEntry));
+      // 思维链只留档给 UI 看，绝不进 messages（回传给模型的 assistant 消息不能带推理内容）；
+      // 思考开关关闭时连留档都不要
+      const reasoning = cfg.api.thinking === false ? '' : (response.reasoning || '');
+      const uiEntry = structuredClone(assistantEntry);
+      if (reasoning) uiEntry.reasoning = reasoning;
+      session.messages.push(uiEntry);
       session.rounds = round + 1;
       markActivity('');
 
@@ -1076,6 +1093,15 @@ export class Orchestrator {
 
   // ── 控制接口 ───────────────────────────────────────────────────────────
 
+  /** 今日估算成本是否已达到预算上限（budget.dailyCostYuan=0 时不限制）。 */
+  overBudget() {
+    const cap = Number(getConfig().budget?.dailyCostYuan) || 0;
+    if (cap <= 0) return false;
+    const usage = this.sessions.todayUsage(todayKey());
+    const cost = estimateCost(usage, { model: getConfig().api?.model });
+    return Number(cost?.cost ?? cost ?? 0) >= cap;
+  }
+
   setPaused(paused, reason = 'manual') {
     this.paused = !!paused;
     this.pauseReason = this.paused ? reason : null;
@@ -1097,6 +1123,7 @@ export class Orchestrator {
     return {
       paused: this.paused,
       pauseReason: this.pauseReason ?? null,
+      overBudget: this.overBudget(),
       running: [...this.runningChats],
       activeSessions: [...this.activeRuns.entries()].map(([chatKey, sessionId]) => ({ chatKey, sessionId })),
       consolidating: [...this.consolidating],

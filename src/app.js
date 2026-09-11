@@ -283,7 +283,12 @@ export function createApp({ log = console.log } = {}) {
   const stickers = new StickerManager(onebot);
   const sender = new SendQueue({
     onebot, store,
-    onSent: ({ chatKey, text }) => log(`[发送 -> ${chatKey}] ${String(text).slice(0, 60)}`)
+    onSent: ({ chatKey, text }) => log(`[发送 -> ${chatKey}] ${String(text).slice(0, 60)}`),
+    // 被 QQ 禁言/风控：推送事件给控制台提示，并记录一条日志
+    onBanned: ({ chatKey, until, reason }) => {
+      log(`[发送 -> ${chatKey}] 被 QQ 限制发言：${reason}`);
+      emit('send-banned', { chatKey, until, reason });
+    }
   });
   const orchestrator = new Orchestrator({ store, memory, stickers, sender, sessions, onebot, emit });
 
@@ -719,6 +724,7 @@ export function createApp({ log = console.log } = {}) {
             ...snowlumaStatus()
           },
           orchestrator: orchestrator.statusSummary(),
+          bans: sender.listBans(),
           usage,
           cost,
           cacheHitRate: cacheHitRate(usage),
@@ -1473,6 +1479,14 @@ export function createApp({ log = console.log } = {}) {
           orchestrator.drainBacklogAfterResume();
         }
         return json(res, 200, { ok: true, paused: orchestrator.paused });
+      }
+
+      // 清除某个会话的禁言/风控熔断（用户确认已解禁或想立刻重试）
+      const clearBanMatch = /^\/api\/chats\/(group|private)_(\d+)\/clear-ban$/.exec(pathname);
+      if (clearBanMatch && method === 'POST') {
+        const chatKey = `${clearBanMatch[1]}:${clearBanMatch[2]}`;
+        sender.clearBan(chatKey);
+        return json(res, 200, { ok: true, chatKey, bans: sender.listBans() });
       }
 
       // 恢复运行，并把所有会话当前未读一次性标记为已读（用户明确选择丢弃积压）

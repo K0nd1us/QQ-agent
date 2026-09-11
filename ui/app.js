@@ -308,8 +308,17 @@ function renderBanner() {
   const s = state.status;
   let show = false;
   let html = '';
-  // 预算保险丝已移除：原先这里有一个 pauseReason === 'budget' 的分支
-  if (state.paused) {
+  const bans = Array.isArray(s?.bans) ? s.bans : [];
+  // 预算保险丝：超限自动暂停
+  if (state.paused && s?.orchestrator?.pauseReason === 'budget') {
+    show = true;
+    html = '💰 今日成本已达预算上限，机器人已自动暂停。到「模型 API → 预算保险丝」调高上限后点恢复。';
+  } else if (bans.length) {
+    show = true;
+    const b = bans[0];
+    const min = Math.max(1, Math.round((b.remainMs || 0) / 60000));
+    html = `🚫 会话 <code>${esc(b.chatKey)}</code> 被 QQ 限制发言，约 ${min} 分钟后自动重试。`;
+  } else if (state.paused) {
     show = true;
     html = '⏸ 机器人已暂停，不会处理任何消息。';
   } else if (s && !s.onebot.connected && !s.onebot.everConnected) {
@@ -322,6 +331,9 @@ function renderBanner() {
       html += ` <button class="btn btn-small" id="banner-resume-btn">恢复</button>
         <button class="btn btn-small btn-danger" id="banner-resume-read-btn" title="恢复运行，并把暂停期间积压的所有未读消息直接标记为已读（不再处理）">恢复并全部标为已读</button>`;
     }
+    if (bans.length) {
+      html += ' <button class="btn btn-small" id="banner-clear-ban-btn" title="立即解除该会话的发送冷却，马上重试">立即重试</button>';
+    }
     banner.innerHTML = html;
     const link = $('#banner-goto-settings');
     if (link) link.addEventListener('click', (e) => { e.preventDefault(); switchTab('settings'); });
@@ -329,6 +341,19 @@ function renderBanner() {
     if (resumeBtn) resumeBtn.addEventListener('click', () => resumePause({ skipBacklog: false }));
     const resumeReadBtn = $('#banner-resume-read-btn');
     if (resumeReadBtn) resumeReadBtn.addEventListener('click', () => resumePause({ skipBacklog: true }));
+    const clearBanBtn = $('#banner-clear-ban-btn');
+    if (clearBanBtn) {
+      clearBanBtn.addEventListener('click', async () => {
+        try {
+          const chatKey = bans[0].chatKey;
+          const [kind, id] = String(chatKey).split(':');
+          await api(`/api/chats/${kind}_${id}/clear-ban`, { method: 'POST', body: '{}' });
+          await refreshStatus();
+        } catch (e) {
+          console.error('解除熔断失败:', e);
+        }
+      });
+    }
   }
 }
 
@@ -2749,6 +2774,8 @@ function renderApiSection(c) {
     <div class="checkbox-row"><input type="checkbox" id="cfg-vision" ${c.api.vision !== false ? 'checked' : ''} />
       <label for="cfg-vision">图片输入（关闭则移除看图工具，模型只会看到 [图片] 占位符）</label>
       <span id="vision-switch-hint" class="muted" style="font-size:12px;align-self:center"></span></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-thinking" ${c.api.thinking !== false ? 'checked' : ''} />
+      <label for="cfg-thinking">模型思考（关闭后请求带 enable_thinking=false，不展示思维链，更省 token）</label></div>
     <div class="settings-divider"></div>
 
     <h3>成本核算</h3>
@@ -2784,6 +2811,12 @@ function renderApiSection(c) {
     <div style="display:flex;gap:8px;margin:8px 0">
       <button class="btn btn-small" id="batch-price-btn">批量自定义价格编辑</button>
       <span class="muted" style="font-size:12px;align-self:center">为多个模型分别设定单价</span>
+    </div>
+
+    <h3>预算保险丝</h3>
+    <div class="field"><label>今日成本上限（元，0 = 不限制）</label>
+      <input type="number" id="cfg-budget" step="0.1" min="0" value="${esc(c.budget?.dailyCostYuan ?? 0)}" />
+      <div class="hint">按官方价/自填单价估算；达到上限后自动暂停，调高并保存后可一键恢复。</div>
     </div>
 
     <div class="settings-divider"></div>
@@ -3091,6 +3124,10 @@ return `
       <div class="field"><label>每小时最多发送</label><input type="number" id="cfg-maxperhour" min="1" value="${esc(c.send.maxPerHour ?? 500)}" /></div>
       <div class="field"><label>按字数附加间隔（毫秒/字）</label><input type="number" id="cfg-bylength" min="0" value="${esc(c.send.byLengthMs ?? 20)}" /></div>
       <div class="field"><label>QQ 硬限制切分长度（0 = 不切）</label><input type="number" id="cfg-hardsplit" min="0" value="${esc(c.send.hardSplitAt ?? 4000)}" /></div>
+    </div>
+    <div class="field"><label>禁言/风控熔断时长（分钟）</label>
+      <input type="number" id="cfg-ban-cooldown-min" min="1" value="${esc(Math.round((c.send?.banCooldownMs ?? 1800000) / 60000))}" />
+      <div class="hint">QQ 返回禁言/风控错误时，该会话暂停发送这段时间，避免反复撞墙。</div>
     </div>
 
     <h3>主动开话题</h3>
@@ -4451,6 +4488,7 @@ async function saveConfig({ quiet = false } = {}) {
   if (sec === 'api') {
     patch.api = {
       vision: chk('#cfg-vision', c.api.vision !== false),
+      thinking: chk('#cfg-thinking', c.api.thinking !== false),
       temperature: Number(val('#cfg-temperature', c.api.temperature)) || 0.8,
       maxRounds: Number(val('#cfg-maxrounds', c.api.maxRounds)) || 12,
       // 成本核算：官方价开关（走中转站时通常要关掉开关自己填）
@@ -4461,6 +4499,10 @@ async function saveConfig({ quiet = false } = {}) {
       priceInputPerM: Number(val('#cfg-price-in', c.api.priceInputPerM ?? 0)) || 0,
       priceOutputPerM: Number(val('#cfg-price-out', c.api.priceOutputPerM ?? 0)) || 0,
       priceCachedPerM: Number(val('#cfg-price-cached', c.api.priceCachedPerM ?? 0)) || 0
+    };
+    patch.budget = {
+      ...(c.budget || {}),
+      dailyCostYuan: Math.max(0, Number(val('#cfg-budget', c.budget?.dailyCostYuan ?? 0)) || 0)
     };
     // 把当前模型的单价存进 modelPrices[模型]（只影响这一个模型，不动内置官方表）。
     // 若开关是打开的，则不应写入 —— 那时输入框是禁用的，读到的值就是官方价，
@@ -4578,6 +4620,7 @@ async function saveConfig({ quiet = false } = {}) {
       maxPerMinute: Number(val('#cfg-maxpermin', c.send?.maxPerMinute)) || 80,
       maxPerHour: Number(val('#cfg-maxperhour', c.send?.maxPerHour)) || 500,
       byLengthMs: Number(val('#cfg-bylength', c.send?.byLengthMs)) || 20,
+      banCooldownMs: Math.max(60000, (Number(val('#cfg-ban-cooldown-min', Math.round((c.send?.banCooldownMs ?? 1800000) / 60000)) || 30) * 60000)),
       hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0
     };
     patch.proactive = {
