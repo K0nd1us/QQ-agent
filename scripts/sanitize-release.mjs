@@ -15,17 +15,17 @@
  *
  * ⚠️ 只动 data/ 下的运行时文件与配置，不碰源码。
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import os from 'node:os';
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import os from "node:os";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DATA_DIR = process.env.QQ_AGENT_DATA_DIR || path.join(ROOT, 'data');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DATA_DIR = process.env.QQ_AGENT_DATA_DIR || path.join(ROOT, "data");
 
 const args = process.argv.slice(2);
-const DRY = args.includes('--dry-run');
-const SCAN_ONLY = args.includes('--scan');
+const DRY = args.includes("--dry-run");
+const SCAN_ONLY = args.includes("--scan");
 
 const log = (...a) => console.log(...a);
 const actions = [];
@@ -41,20 +41,26 @@ const actions = [];
 function rmrf(rel, label) {
   const p = path.join(DATA_DIR, rel);
   if (!fs.existsSync(p)) return;
-  const trashDir = path.join(DATA_DIR, '.trash');
+  const trashDir = path.join(DATA_DIR, ".trash");
   const dest = path.join(trashDir, `${rel}.${Date.now()}`);
   try {
     if (!DRY) {
       fs.mkdirSync(trashDir, { recursive: true });
       fs.renameSync(p, dest);
     }
-    let n = '?';
+    let n = "?";
     try {
       n = fs.statSync(dest).isDirectory() ? fs.readdirSync(dest).length : 1;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     if (!DRY) {
       // 尽力真删，失败不影响结果（原路径已改名，不会随项目分发）
-      try { fs.rmSync(dest, { recursive: true, force: true }); } catch { /* ignore */ }
+      try {
+        fs.rmSync(dest, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
     }
     actions.push(`${label}：移除 ${rel}（${n} 项）`);
   } catch (e) {
@@ -63,11 +69,14 @@ function rmrf(rel, label) {
 }
 
 function resetConfig() {
-  const p = path.join(DATA_DIR, 'config.json');
-  if (!fs.existsSync(p)) { actions.push('配置文件不存在，跳过'); return; }
+  const p = path.join(DATA_DIR, "config.json");
+  if (!fs.existsSync(p)) {
+    actions.push("配置文件不存在，跳过");
+    return;
+  }
   let cfg;
   try {
-    cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+    cfg = JSON.parse(fs.readFileSync(p, "utf8"));
   } catch (e) {
     actions.push(`配置文件解析失败，跳过 - ${e.message}`);
     return;
@@ -75,62 +84,97 @@ function resetConfig() {
 
   const cleared = [];
   const set = (obj, key, val) => {
-    if (obj && key in obj && obj[key] !== val) { obj[key] = val; cleared.push(key); }
+    if (obj && key in obj && obj[key] !== val) {
+      obj[key] = val;
+      cleared.push(key);
+    }
   };
 
   // ── API 凭据 ──
   cfg.api = cfg.api || {};
-  for (const k of ['apiKey', 'baseUrl', 'model', 'provider', 'priceRemoteUrl']) set(cfg.api, k, '');
+  for (const k of ["apiKey", "baseUrl", "model", "provider", "priceRemoteUrl"])
+    set(cfg.api, k, "");
   if (cfg.dshProviderKeys && Object.keys(cfg.dshProviderKeys).length) {
-    cleared.push('dshProviderKeys');
+    cleared.push("dshProviderKeys");
     if (!DRY) cfg.dshProviderKeys = {};
-
   }
   if (Array.isArray(cfg.providers)) {
     let hit = false;
     for (const p of cfg.providers) {
-      if (p && 'apiKey' in p) { p.apiKey = ''; hit = true; }
+      if (p && "apiKey" in p) {
+        p.apiKey = "";
+        hit = true;
+      }
     }
-    if (hit) cleared.push('providers[].apiKey');
+    if (hit) cleared.push("providers[].apiKey");
   }
 
   // ── 搜索服务 Key（含自定义的多个）──
   if (cfg.webSearch) {
-    for (const k of ['deepseek', 'zhipu', 'bocha', 'baidu', 'metaso', 'custom']) {
-      if (cfg.webSearch[k] && 'apiKey' in cfg.webSearch[k]) {
-        cfg.webSearch[k].apiKey = '';
+    for (const k of [
+      "deepseek",
+      "zhipu",
+      "bocha",
+      "baidu",
+      "metaso",
+      "custom",
+    ]) {
+      if (cfg.webSearch[k] && "apiKey" in cfg.webSearch[k]) {
+        cfg.webSearch[k].apiKey = "";
         cleared.push(`webSearch.${k}.apiKey`);
       }
     }
     if (Array.isArray(cfg.webSearch.providers)) {
       let hit = false;
       for (const p of cfg.webSearch.providers) {
-        if (p && 'apiKey' in p) { p.apiKey = ''; hit = true; }
+        if (p && "apiKey" in p) {
+          p.apiKey = "";
+          hit = true;
+        }
       }
-      if (hit) cleared.push('webSearch.providers[].apiKey');
+      if (hit) cleared.push("webSearch.providers[].apiKey");
     }
   }
 
-  // ── SnowLuma 令牌 / 密码 ──
+  // ── OneBot 令牌（连接信息）与协议端目录 ──
+  // 新结构：onebot（令牌）+ protocol（协议端目录）；老结构：snowluma（两者混在一起）。
+  // 两份都清，保证旧配置副本也能被脱敏。
+  if (cfg.onebot) {
+    for (const k of ["accessToken", "httpAccessToken"]) {
+      set(cfg.onebot, k, "");
+    }
+  }
+  if (cfg.protocol) {
+    set(cfg.protocol, "dir", "");
+  }
   if (cfg.snowluma) {
-    for (const k of ['accessToken', 'httpAccessToken', 'webuiPassword', 'dir']) {
-      set(cfg.snowluma, k, '');
+    for (const k of [
+      "accessToken",
+      "httpAccessToken",
+      "webuiPassword",
+      "dir",
+    ]) {
+      set(cfg.snowluma, k, "");
     }
   }
 
   // ── 个人配置 ──
   if (cfg.persona) {
-    for (const k of ['roleText', 'customRules', 'selfNickname']) set(cfg.persona, k, '');
-    set(cfg.persona, 'botName', '小鲸鱼');
+    for (const k of ["roleText", "customRules", "selfNickname"])
+      set(cfg.persona, k, "");
+    set(cfg.persona, "botName", "小鲸鱼");
   }
   if (cfg.allow) {
     cfg.allow.groups = [];
     cfg.allow.private = [];
   }
-  if (cfg.deny) { cfg.deny.groups = []; cfg.deny.private = []; }
-  if ('allowAllWhenEmpty' in cfg) cfg.allowAllWhenEmpty = false;
-  if ('memberNotes' in cfg && Object.keys(cfg.memberNotes || {}).length) {
-    cleared.push('memberNotes');
+  if (cfg.deny) {
+    cfg.deny.groups = [];
+    cfg.deny.private = [];
+  }
+  if ("allowAllWhenEmpty" in cfg) cfg.allowAllWhenEmpty = false;
+  if ("memberNotes" in cfg && Object.keys(cfg.memberNotes || {}).length) {
+    cleared.push("memberNotes");
     if (!DRY) cfg.memberNotes = {};
   }
 
@@ -140,10 +184,12 @@ function resetConfig() {
   cfg.api.priceOutputPerM = 0;
   cfg.api.priceCachedPerM = 0;
 
-  actions.push(`配置字段清理：${cleared.length ? cleared.join('、') : '（无需清理）'}`);
+  actions.push(
+    `配置字段清理：${cleared.length ? cleared.join("、") : "（无需清理）"}`,
+  );
   if (!DRY) {
-    const tmp = p + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8');
+    const tmp = p + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), "utf8");
     fs.renameSync(tmp, p);
   }
 }
@@ -153,39 +199,72 @@ function resetConfig() {
  * 只扫文本类源码与配置，跳过 node_modules / 二进制 / snowluma 第三方目录。
  */
 function scanSecrets() {
-  const SKIP_DIR = new Set(['node_modules', '.git', 'snowluma', 'backups', 'logs', '.trash', 'dist', 'out']);
+  const SKIP_DIR = new Set([
+    "node_modules",
+    ".git",
+    "snowluma",
+    "backups",
+    "logs",
+    ".trash",
+    "dist",
+    "out",
+  ]);
   // 测试文件里的假 key 是固定样例，不算泄露
-  const SKIP_FILE = new Set(['test/selftest.mjs', 'test\\selftest.mjs']);
-  const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.json', '.md', '.html', '.css', '.bat', '.yml', '.yaml']);
+  const SKIP_FILE = new Set(["test/selftest.mjs", "test\\selftest.mjs"]);
+  const TEXT_EXT = new Set([
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".json",
+    ".md",
+    ".html",
+    ".css",
+    ".bat",
+    ".yml",
+    ".yaml",
+  ]);
   const PATTERNS = [
-    { name: 'OpenAI Key', re: /sk-[A-Za-z0-9]{20,}/g },
-    { name: 'Anthropic Key', re: /sk-ant-[A-Za-z0-9\-_]{20,}/g },
-    { name: 'DeepSeek Key', re: /\bsk-[0-9a-f]{32}\b/gi },
-    { name: '通用 API Key 赋值', re: /(?:api[_-]?key|apikey)\s*[:=]\s*['"][^'"]{16,}['"]/gi }
+    { name: "OpenAI Key", re: /sk-[A-Za-z0-9]{20,}/g },
+    { name: "Anthropic Key", re: /sk-ant-[A-Za-z0-9\-_]{20,}/g },
+    { name: "DeepSeek Key", re: /\bsk-[0-9a-f]{32}\b/gi },
+    {
+      name: "通用 API Key 赋值",
+      re: /(?:api[_-]?key|apikey)\s*[:=]\s*['"][^'"]{16,}['"]/gi,
+    },
   ];
 
   const found = [];
   const walk = (dir) => {
     let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (SKIP_DIR.has(e.name) || e.name.startsWith('_backup')) continue;
+        if (SKIP_DIR.has(e.name) || e.name.startsWith("_backup")) continue;
         walk(full);
         continue;
       }
       if (!e.isFile()) continue;
       if (!TEXT_EXT.has(path.extname(e.name).toLowerCase())) continue;
-      const relPath = path.relative(ROOT, full).replace(/\\/g, '/');
+      const relPath = path.relative(ROOT, full).replace(/\\/g, "/");
       if (SKIP_FILE.has(relPath)) continue;
       let text;
-      try { text = fs.readFileSync(full, 'utf8'); } catch { continue; }
+      try {
+        text = fs.readFileSync(full, "utf8");
+      } catch {
+        continue;
+      }
       for (const { name, re } of PATTERNS) {
         re.lastIndex = 0;
         const m = text.match(re);
         if (m) {
-          found.push(`${path.relative(ROOT, full)} → ${name}（${m.length} 处）`);
+          found.push(
+            `${path.relative(ROOT, full)} → ${name}（${m.length} 处）`,
+          );
         }
       }
     }
@@ -194,84 +273,120 @@ function scanSecrets() {
   return found;
 }
 
-log('════════════════════════════════════════');
-log(DRY ? '发布脱敏 —— 演练模式（不修改任何文件）' : (SCAN_ONLY ? '发布脱敏 —— 仅扫描' : '发布脱敏 —— 执行模式'));
-log('════════════════════════════════════════');
-log('项目目录：', ROOT);
-log('数据目录：', DATA_DIR);
-log('');
+log("════════════════════════════════════════");
+log(
+  DRY
+    ? "发布脱敏 —— 演练模式（不修改任何文件）"
+    : SCAN_ONLY
+      ? "发布脱敏 —— 仅扫描"
+      : "发布脱敏 —— 执行模式",
+);
+log("════════════════════════════════════════");
+log("项目目录：", ROOT);
+log("数据目录：", DATA_DIR);
+log("");
 
 if (!SCAN_ONLY) {
   resetConfig();
-  rmrf('messages', '聊天存档');
-  rmrf('sessions', '会话留档');
-  rmrf('memory', '记忆');
-  rmrf('stickers.json', '表情库');
-  rmrf('usage-today.json', '今日用量');
-  rmrf('feedbacks.json', '反馈记录');
-  rmrf('price-feed-cache.json', '远程价格表缓存');
+  rmrf("messages", "聊天存档");
+  rmrf("sessions", "会话留档");
+  rmrf("memory", "记忆");
+  rmrf("stickers.json", "表情库");
+  rmrf("usage-today.json", "今日用量");
+  rmrf("feedbacks.json", "反馈记录");
+  rmrf("price-feed-cache.json", "远程价格表缓存");
+  // 自定义工具（插件）可能内含内部地址 / Key / 业务逻辑，分发前一并清掉
+  rmrf("tools", "自定义工具");
 
   // 中转目录在系统临时文件夹里（不在项目内），尽力清一次即可
-  const trashRoot = path.join(os.tmpdir(), 'qq-agent-sanitize');
+  const trashRoot = path.join(os.tmpdir(), "qq-agent-sanitize");
   if (!DRY && fs.existsSync(trashRoot)) {
-    try { fs.rmSync(trashRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(trashRoot, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   // SnowLuma 登录态 / 日志
-  const slDir = path.join(ROOT, 'snowluma');
-  for (const rel of ['config/onebot_0.json', 'config/consent.json', 'config/notifications.json']) {
+  const slDir = path.join(ROOT, "snowluma");
+  for (const rel of [
+    "config/onebot_0.json",
+    "config/consent.json",
+    "config/notifications.json",
+  ]) {
     const f = path.join(slDir, rel);
     if (fs.existsSync(f)) {
       // 只清里面的令牌字段，整体删除会让 SnowLuma 无法启动
       try {
-        const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+        const j = JSON.parse(fs.readFileSync(f, "utf8"));
         let hit = false;
         const wipe = (o) => {
-          if (!o || typeof o !== 'object') return;
+          if (!o || typeof o !== "object") return;
           for (const k of Object.keys(o)) {
-            if (/token|password|secret|key/i.test(k) && typeof o[k] === 'string' && o[k]) { o[k] = ''; hit = true; }
-            else if (o[k] && typeof o[k] === 'object') wipe(o[k]);
+            if (
+              /token|password|secret|key/i.test(k) &&
+              typeof o[k] === "string" &&
+              o[k]
+            ) {
+              o[k] = "";
+              hit = true;
+            } else if (o[k] && typeof o[k] === "object") wipe(o[k]);
           }
         };
         wipe(j);
         if (hit) {
           actions.push(`SnowLuma 令牌：清理 ${rel}`);
           if (!DRY) {
-            const tmp = f + '.tmp';
-            fs.writeFileSync(tmp, JSON.stringify(j, null, 2), 'utf8');
+            const tmp = f + ".tmp";
+            fs.writeFileSync(tmp, JSON.stringify(j, null, 2), "utf8");
             fs.renameSync(tmp, f);
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
   // 日志目录
-  const logsDir = path.join(slDir, 'logs');
+  const logsDir = path.join(slDir, "logs");
   if (fs.existsSync(logsDir)) {
     let n = 0;
-    try { n = fs.readdirSync(logsDir).length; } catch { /* ignore */ }
+    try {
+      n = fs.readdirSync(logsDir).length;
+    } catch {
+      /* ignore */
+    }
     if (n) {
       actions.push(`SnowLuma 日志：清理 ${n} 个文件`);
       if (!DRY) {
-        try { fs.rmSync(logsDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        try {
+          fs.rmSync(logsDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
 
-  log('清理动作：');
-  for (const a of actions) log('  •', a);
-  log('');
+  log("清理动作：");
+  for (const a of actions) log("  •", a);
+  log("");
 }
 
-log('敏感信息扫描：');
+log("敏感信息扫描：");
 const found = scanSecrets();
 if (found.length) {
-  log('  ⚠ 发现可疑内容：');
-  for (const f of found) log('    -', f);
-  log('');
-  log('  请手动确认上方条目；若为误报（如文档示例）可忽略，否则先清理再发布。');
+  log("  ⚠ 发现可疑内容：");
+  for (const f of found) log("    -", f);
+  log("");
+  log("  请手动确认上方条目；若为误报（如文档示例）可忽略，否则先清理再发布。");
 } else {
-  log('  ✓ 未发现已知格式的密钥残留');
+  log("  ✓ 未发现已知格式的密钥残留");
 }
-log('');
-log(DRY ? '演练结束。确认无误后去掉 --dry-run 再执行一次。' : '完成。现在可以压缩分享了（建议保留 node_modules，接收方无需 npm install）。');
+log("");
+log(
+  DRY
+    ? "演练结束。确认无误后去掉 --dry-run 再执行一次。"
+    : "完成。现在可以压缩分享了（建议保留 node_modules，接收方无需 npm install）。",
+);

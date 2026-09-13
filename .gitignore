@@ -14,6 +14,15 @@ snowluma/logs/
 # 安装方式见 README「安装 SnowLuma」一节。
 snowluma/
 
+# 其它协议端（NapCat / Lagrange / 自定义）同样是第三方项目，且**可能带令牌**：
+# 它们放在项目根目录下时一律不进版本库。安装方式见 docs/protocols.md。
+napcat/
+NapCat.Shell/
+NapCat/
+lagrange/
+Lagrange.OneBot/
+Lagrange/
+
 # AI 协作过程记录（findings/progress/task_plan）：开发过程稿，不是作品的一部分
 findings.md
 progress.md
