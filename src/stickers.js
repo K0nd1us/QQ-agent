@@ -73,7 +73,11 @@ export function mergeStickerLibrary(existing, fetched) {
       resId: String(item.resId || item.emoji_id || id).trim(),
       url: String(item.url || old?.url || '').trim(),
       md5: String(item.md5 || old?.md5 || '').trim().toUpperCase(),
-      desc: String(item.desc ?? old?.desc ?? '').trim(),
+      // 同步回来的 desc 可能是空串（QQ 收藏表情常年如此），不能用它覆盖已存的备注。
+      // 原写法 `String(item.desc ?? old?.desc ?? '')` 里的 ?? 只在 null/undefined 时回退，
+      // 空串照样会把 desc 冲空 —— 于是每同步一次，本地存着的备注就没了。
+      // 判空用 `||`：空白字符也算空（下面已 trim）。
+      desc: String(item.desc ?? '').trim() || String(old?.desc ?? '').trim(),
       localNote: old?.localNote || '',
       tags: old?.tags || [],
       usage: old?.usage || '',

@@ -49,11 +49,12 @@
   "scripts": {
     "start": "electron .",
     "server": "node src/server.js",
-    "test": "node test/selftest.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs",
+    "test": "node test/selftest.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs && node test/sticker-desc-test.mjs",
     "test:prompt": "node test/test-prompt.mjs",
     "test:render": "node test/render-test.mjs",
     "test:scroll": "node test/scroll-test.mjs",
-    "test:usage": "node test/usage-e2e.mjs"
+    "test:usage": "node test/usage-e2e.mjs",
+    "test:sticker-desc": "node test/sticker-desc-test.mjs"
   },
   "dependencies": {
     "js-yaml": "^5.4.1",
