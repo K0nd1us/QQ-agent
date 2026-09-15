@@ -189,6 +189,75 @@ try {
     }
   }
 
+  // ── 生图模式卡片：纯新增，必须夹在「主动开话题」与「表情包」之间，且不动任何既有控件 ──
+  console.log('\n=== 生图模式卡片（新增，且位置在主动开话题与表情包之间）===');
+  try {
+    const html = (ctx.renderChatSection || sandbox.renderChatSection)({ ...cfg });
+    const at = (s) => html.indexOf(s);
+    const iProactive = at('<h3>主动开话题</h3>');
+    const iImageGen = at('<h3>生图模式</h3>');
+    const iSticker = at('<h3>表情包</h3>');
+    const ordered = iProactive >= 0 && iImageGen > iProactive && iSticker > iImageGen;
+    ordered ? pass++ : fail++;
+    console.log('  ' + (ordered ? 'OK   ' : 'FAIL ') + '顺序：主动开话题(' + iProactive + ') → 生图模式(' + iImageGen + ') → 表情包(' + iSticker + ')');
+
+    // 控件从 6 个变成 9 个：默认边长换成「比例下拉 + 自定义宽高」，并加了「打开图库」按钮
+    const ids = ['cfg-imagegen', 'cfg-imagegen-url', 'cfg-imagegen-ratio',
+                 'cfg-imagegen-width', 'cfg-imagegen-height', 'cfg-imagegen-steps',
+                 'cfg-imagegen-cooldown', 'cfg-imagegen-timeout', 'imagegen-gallery-btn'];
+    const missing = ids.filter((id) => !html.includes('id="' + id + '"'));
+    missing.length ? fail++ : pass++;
+    console.log('  ' + (missing.length ? 'FAIL ' : 'OK   ') + '生图控件齐全（' + ids.length + ' 个）'
+      + (missing.length ? '  缺: ' + missing.join(', ') : ''));
+
+    // 比例下拉必须列全 9 个预设 —— 这份表和绘图服务侧的 SIZE_PRESETS 是两份，
+    // 少一个就意味着界面上选不到、只能手填像素。
+    const ratioSel = html.slice(html.indexOf('id="cfg-imagegen-ratio"'), html.indexOf('id="cfg-imagegen-width"'));
+    const ratioVals = [...ratioSel.matchAll(/value="(\d+:\d+)"/g)].map((m) => m[1]);
+    const wantRatios = ['1:1', '3:4', '4:3', '2:3', '3:2', '9:16', '16:9', '3:5', '5:3'];
+    const lackRatio = wantRatios.filter((r) => !ratioVals.includes(r));
+    lackRatio.length ? fail++ : pass++;
+    console.log('  ' + (lackRatio.length ? 'FAIL ' : 'OK   ') + '比例预设齐全（' + ratioVals.length + '/9 个）'
+      + (lackRatio.length ? '  缺: ' + lackRatio.join(', ') : ''));
+
+    // 已保存的比例要落在选中项上，否则打开面板会跳回第一项，用户以为没保存上。
+    // ⚠️ 不能写死 '1:1'：defaultRatio 这个配置字段属于后端那半边（src/config.js），
+    // 本 PR 只改界面 —— 两个 PR 要能各自独立合并，所以按配置实际值断言：
+    // 字段不存在时应该落在「自定义」上。
+    const wantRatio = cfg.imageGen?.defaultRatio ?? '';
+    const ratioSelected = wantRatio
+      ? new RegExp('value="' + wantRatio + '"[^>]*selected').test(ratioSel)
+      : /<option value=""[^>]*selected/.test(ratioSel);
+    ratioSelected ? pass++ : fail++;
+    console.log('  ' + (ratioSelected ? 'OK   ' : 'FAIL ') + '已保存的比例被选中（defaultRatio=' + (wantRatio || '空 → 自定义') + '）');
+
+    // 自定义宽高是「8 的倍数」——界面上要给出 step，否则用户填 500 保存后才发现被改了
+    const stepOk = /id="cfg-imagegen-width"[^>]*step="8"/.test(html) && /id="cfg-imagegen-height"[^>]*step="8"/.test(html);
+    stepOk ? pass++ : fail++;
+    console.log('  ' + (stepOk ? 'OK   ' : 'FAIL ') + '自定义宽高带 step=8（8 的倍数提示）');
+
+    // 本卡片是纯新增：既有聊天设置控件一个都不能少、不能改名
+    const legacy = ['cfg-proactive', 'cfg-pro-min', 'cfg-pro-max', 'cfg-pro-prob',
+                    'cfg-sticker', 'cfg-sticker-encourage',
+                    'cfg-mingap', 'cfg-maxgap', 'cfg-maxpermin', 'cfg-maxperhour',
+                    'cfg-bylength', 'cfg-hardsplit'];
+    const lost = legacy.filter((id) => !html.includes('id="' + id + '"'));
+    lost.length ? fail++ : pass++;
+    console.log('  ' + (lost.length ? 'FAIL ' : 'OK   ') + '既有控件未被改动（' + legacy.length + ' 个）'
+      + (lost.length ? '  丢: ' + lost.join(', ') : ''));
+
+    // 老配置里没有 imageGen 时也不能把整个聊天设置页带崩（这块历史上出过 ReferenceError）
+    const legacyCfg = { ...cfg };
+    delete legacyCfg.imageGen;
+    const legacyHtml = (ctx.renderChatSection || sandbox.renderChatSection)(legacyCfg);
+    const survived = typeof legacyHtml === 'string' && legacyHtml.includes('生图模式');
+    survived ? pass++ : fail++;
+    console.log('  ' + (survived ? 'OK   ' : 'FAIL ') + '配置缺 imageGen 时仍能渲染（可选链兜底）');
+  } catch (e) {
+    fail++;
+    console.log('  FAIL  生图模式卡片渲染抛错: ' + (e && e.message));
+  }
+
     // ── 刻度段高亮：滑到哪一档，对应标签 + 上边线一起变色 ──
     console.log('\n=== 刻度段高亮（拖动联动）===');
     /** 从渲染出的 HTML 里找出带 .on 的刻度段编号 */

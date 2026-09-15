@@ -3064,6 +3064,24 @@ const TIER_HINT = {
   4: '任何消息都响应（改造前的行为，最费 token）'
 };
 
+/**
+ * 画面比例预设。**必须与绘图服务侧的像素表保持一致**
+ * （sd_service.py 里 JobQueue.SIZE_PRESETS），改一处要两边同步改。
+ * 全部是 8 的倍数（VAE 下采样 8 倍），且面积都贴近 512²——
+ * SD1.5 底模在原生面积附近出图最稳，拉太大会出多手多脚。
+ */
+const IMAGE_RATIOS = [
+  ['1:1', '正方形 512×512'],
+  ['3:4', '竖版 432×576'],
+  ['4:3', '横版 576×432'],
+  ['2:3', '全身立绘 416×624'],
+  ['3:2', '风景 624×416'],
+  ['9:16', '手机壁纸 360×640'],
+  ['16:9', '宽屏 640×360'],
+  ['3:5', '长图 384×640'],
+  ['5:3', '宽幅 640×384']
+];
+
 function renderChatSection(c) {
     const st = c.store || {};
   // 滑条位置是唯一真相；档位与概率都由它派生（与后端 tier-slider.js 同一套规则）
@@ -3100,6 +3118,39 @@ return `
       <div class="field"><label>检查间隔下限（毫秒）</label><input type="number" id="cfg-pro-min" min="60000" value="${esc(c.proactive.checkIntervalMinMs)}" /></div>
       <div class="field"><label>检查间隔上限（毫秒）</label><input type="number" id="cfg-pro-max" min="120000" value="${esc(c.proactive.checkIntervalMaxMs)}" /></div>
       <div class="field"><label>触发概率 0~1</label><input type="number" id="cfg-pro-prob" step="0.05" min="0" max="1" value="${esc(c.proactive.probability)}" /></div>
+    </div>
+
+    <h3>生图模式</h3>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-imagegen" ${c.imageGen?.enabled ? 'checked' : ''} />
+      <label for="cfg-imagegen">启用生图（群友要图时调用本机绘图服务）</label></div>
+    <div class="field-row">
+      <div class="field"><label>绘图服务地址</label><input type="text" id="cfg-imagegen-url" value="${esc(c.imageGen?.serviceUrl ?? 'http://127.0.0.1:17777')}" /></div>
+      <div class="field"><label>默认画面比例</label>
+        <select id="cfg-imagegen-ratio">
+          <option value="" ${c.imageGen?.defaultRatio ? '' : 'selected'}>自定义（用下面的宽高）</option>
+          ${IMAGE_RATIOS.map(([v, label]) =>
+            `<option value="${v}" ${c.imageGen?.defaultRatio === v ? 'selected' : ''}>${esc(label)}　${v}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="field"><label>默认步数</label><input type="number" id="cfg-imagegen-steps" min="1" max="150" value="${esc(c.imageGen?.defaultSteps ?? 20)}" /></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>自定义宽（像素，8 的倍数）</label><input type="number" id="cfg-imagegen-width" min="64" max="2048" step="8" value="${esc(c.imageGen?.defaultWidth ?? 512)}" /></div>
+      <div class="field"><label>自定义高（像素，8 的倍数）</label><input type="number" id="cfg-imagegen-height" min="64" max="2048" step="8" value="${esc(c.imageGen?.defaultHeight ?? 512)}" /></div>
+      <div class="field"><label>同一个人冷却（毫秒）</label><input type="number" id="cfg-imagegen-cooldown" min="0" value="${esc(c.imageGen?.cooldownMs ?? 60000)}" /></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>生成超时（毫秒）</label><input type="number" id="cfg-imagegen-timeout" min="10000" value="${esc(c.imageGen?.timeoutMs ?? 300000)}" /></div>
+      <div class="field"><label>图库</label>
+        <button type="button" class="btn btn-small" id="imagegen-gallery-btn">打开图库</button>
+      </div>
+    </div>
+    <div class="hint">
+      关闭时这个工具不会出现在模型面前，连 token 都不花。开启前请先在本机跑起绘图服务；
+      绘图模型冷启动要 60~120 秒，所以「生成超时」默认给了 5 分钟。
+      「默认画面比例」是模型没指定形状时用的兜底；冷却按**人**算，同一个群里换个人不受影响。
+      「打开图库」进的是绘图服务的控制台：缩略图、★ 收藏（永不自动删）、删除、按天清理都在那里。
     </div>
 
     <h3>表情包</h3>
@@ -3240,6 +3291,18 @@ function renderOnebotSection(c) {
 }
 
 function bindSettingsEvents(c) {
+  // ── 生图图库按钮（聊天设置 → 生图模式卡片里那个「打开图库」）──
+  // 只在按钮存在时绑定，其它设置区块里没有它。
+  // Electron 里 window.open 会被 main.js 的 setWindowOpenHandler 转给系统默认浏览器，
+  // 开发模式（纯浏览器）则正常开新标签页。地址取界面上**正在编辑**的值而不是已保存的，
+  // 这样「改完地址还没点保存、想先看一眼」也能用。
+  const galleryBtn = $('#imagegen-gallery-btn');
+  if (galleryBtn) galleryBtn.addEventListener('click', () => {
+    const input = $('#cfg-imagegen-url');
+    const base = String((input && input.value) || 'http://127.0.0.1:17777').trim().replace(/\/+$/, '');
+    window.open(base + '/ui', '_blank', 'noopener');
+  });
+
   // 保存当前区块设置（通用保存按钮）。只有当前区块的字段才会被读取，不会 null 报错。
   const saveCfgBtn = $('#save-cfg-btn');
   if (saveCfgBtn) saveCfgBtn.addEventListener('click', async () => {
@@ -4433,6 +4496,13 @@ async function saveConfig({ quiet = false } = {}) {
     const node = el(sel);
     return node ? node.checked : fallback;
   };
+  // 出图边长：钳到 64..2048，并**吸附到 8 的倍数**（VAE 下采样 8 倍，
+  // 非 8 倍数会被 A1111 静默裁剪，宁可在这里就纠正）。
+  const clampSide = (raw, fallback) => {
+    const n = Number(raw);
+    const base = Number.isFinite(n) && n > 0 ? n : fallback;
+    return Math.min(2048, Math.max(64, Math.round(base / 8) * 8));
+  };
   const sec = state.settingsSection || 'api';
 
   const patch = {};
@@ -4586,6 +4656,20 @@ async function saveConfig({ quiet = false } = {}) {
       checkIntervalMinMs: Number(val('#cfg-pro-min', c.proactive?.checkIntervalMinMs)) || 1800000,
       checkIntervalMaxMs: Number(val('#cfg-pro-max', c.proactive?.checkIntervalMaxMs)) || 5400000,
       probability: Number(val('#cfg-pro-prob', c.proactive?.probability)) || 0.25
+    };
+    patch.imageGen = {
+      ...c.imageGen,
+      enabled: chk('#cfg-imagegen', !!c.imageGen?.enabled),
+      // 地址必须是非空字符串，否则工具会拿它当「未配置」直接报错
+      serviceUrl: String(val('#cfg-imagegen-url', c.imageGen?.serviceUrl ?? '')).trim() || 'http://127.0.0.1:17777',
+      // 与 config.js 的 DEFAULT_CONFIG.imageGen 保持一致：'1:1' / 512 / 512 / 20 / 60000 / 300000
+      // 比例空串 = 用自定义宽高；宽高都钳到 64..2048 并且必须是 8 的倍数（绘图服务侧也会校验）
+      defaultRatio: String(val('#cfg-imagegen-ratio', c.imageGen?.defaultRatio ?? '')).trim(),
+      defaultWidth: clampSide(val('#cfg-imagegen-width', c.imageGen?.defaultWidth), 512),
+      defaultHeight: clampSide(val('#cfg-imagegen-height', c.imageGen?.defaultHeight), 512),
+      defaultSteps: Math.min(150, Math.max(1, Number(val('#cfg-imagegen-steps', c.imageGen?.defaultSteps)) || 20)),
+      cooldownMs: Number(val('#cfg-imagegen-cooldown', c.imageGen?.cooldownMs)) || 60000,
+      timeoutMs: Number(val('#cfg-imagegen-timeout', c.imageGen?.timeoutMs)) || 300000
     };
     patch.sticker = {
       ...c.sticker,
