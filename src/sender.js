@@ -134,6 +134,34 @@ export class SendQueue {
     });
   }
 
+  /**
+   * 发送一张图片（独立气泡）。与 sendSticker 的区别只有语义：这个用于发
+   * 生成的图片/临时图片，不涉及表情库。
+   *
+   * options.file = 图片来源：本地文件绝对路径 / http(s) URL / base64://。
+   * 生成图默认走 base64://，不落盘，也就没有图床 rkey 过期的问题。
+   * options.label 只影响留档文字（写进 store，供下一轮提示词看到）。
+   */
+  sendImage(chatKey, imageSource, options = {}) {
+    const [kind, id] = String(chatKey).split(':');
+    const source = String(options.file || imageSource || '').trim();
+    if (!source) throw new Error('没有可发送的图片来源');
+    const chain = this.#chain(chatKey);
+    return chain(async () => {
+      this.#checkRate(chatKey);
+      await sleep(randInt(300, 800)); // 与其它发送保持一致的短停顿
+      const data = await this.onebot.sendImage(kind, id, source, {
+        replyToMessageId: options.replyToMessageId ?? null,
+        atUserId: options.atUserId ?? null
+      });
+      const ts = Date.now();
+      const label = options.label ? `[图片:${String(options.label).slice(0, 60)}]` : '[图片]';
+      this.store.appendSelf(chatKey, { text: label, ts, mid: data?.message_id ?? null });
+      this.onSent?.({ chatKey, text: '[图片]', messageId: data?.message_id ?? null });
+      return { message_id: data?.message_id ?? null };
+    });
+  }
+
   /** 拍一拍。发送成功后留档（self 记录），否则下一次运行不知道自己拍过。 */
   poke(chatKey, targetUserId) {
     const [kind, id] = String(chatKey).split(':');

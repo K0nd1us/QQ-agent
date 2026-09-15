@@ -187,6 +187,14 @@ export class OneBotClient {
     return this.sendSegments(kind, id, segments);
   }
 
+  /**
+   * 发一张图片。语义化别名，与 sendSticker 共用同一套 image 段落构造。
+   * @param imageSource 图片段 file 字段：本地文件绝对路径 / http(s) URL / base64://
+   */
+  async sendImage(kind, id, imageSource, opts = {}) {
+    return this.sendSticker(kind, id, imageSource, opts);
+  }
+
   async sendPoke(kind, id, targetUserId) {
     if (kind === 'private') {
       return this.call('friend_poke', { user_id: Number(id) }).catch(() =>

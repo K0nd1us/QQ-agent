@@ -148,6 +148,30 @@ export const DEFAULT_CONFIG = {
     idleThresholdMs: 1800000,   // 群里静默多久才算"冷场"
     probability: 0.25
   },
+  // 本地图片生成（可选，默认关闭）。把绘图请求转给本机运行的绘图服务，
+  // 契约与部署方式见 PR 说明；没部署时保持 enabled:false 即可，工具不会暴露给模型。
+  imageGen: {
+    enabled: false,
+    // 绘图服务地址。允许本机/局域网地址 —— 它来自用户自己的配置，不是模型输入。
+    serviceUrl: 'http://127.0.0.1:17777',
+    // 冷启动绘图模型可能要 60~120 秒，整体超时必须放宽。
+    timeoutMs: 300000,
+    // 默认画面比例。为了不用在两边各维护一份像素表，这里存**预设名**而不是像素——
+    // 预设表在绘图服务侧（sd_service.py 的 JobQueue.SIZE_PRESETS）。
+    // 留空则改用下面的 defaultWidth / defaultHeight。
+    defaultRatio: '1:1',
+    // 「自定义」长宽：只有 defaultRatio 为空时才生效，必须是 8 的倍数。
+    defaultWidth: 512,
+    defaultHeight: 512,
+    // 兼容旧配置：只在既没有 defaultRatio 也没有 defaultWidth 时兜底。
+    defaultSize: 512,
+    defaultSteps: 20,
+    // 同一个人两次生成的最小间隔（毫秒）：生图很重，防止模型连续触发。
+    // 注意是「按人」不是「按会话」——同一个群里换个人不该被前一个人挡住。
+    cooldownMs: 60000,
+    // 提示词长度上限，避免超长文本塞给绘图模型。
+    maxPromptChars: 600
+  },
   // 表情包
   sticker: {
     enabled: true,

@@ -6,7 +6,7 @@
 import { getConfig } from './config.js';
 import { normalizeMessageList, unquoteJsonString } from './util.js';
 import { formatStickerList } from './stickers.js';
-import { validateImageUrl, safeFetchBinary } from './safe-fetch.js';
+import { validateImageUrl, safeFetchBinary, validateFetchUrl } from './safe-fetch.js';
 import { webSearch, webFetch } from './web-search.js';
 import { expandForwardNodes } from './onebot.js';
 
@@ -60,6 +60,38 @@ function imageParts(text, dataUrls) {
   return parts;
 }
 
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ── 本地图片生成（可选，默认关闭）────────────────────────────────────
+// 只跟本机/局域网内的绘图服务说话，地址来自用户配置而非模型输入，所以这里显式允许
+// 内网；safe-fetch 的默认策略一个字没改。
+const imageGenLastAt = new Map(); // 冷却键（chatKey:userId，拿不到 userId 时退化成 chatKey）-> 上次生成完成的时间戳
+
+async function drawingServiceFetch(baseUrl, path, { method = 'GET', body = null, timeoutMs = 15000 } = {}) {
+  const url = new URL(path, baseUrl).toString();
+  const { url: safeUrl } = await validateFetchUrl(url, { allowPrivate: true });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(safeUrl, {
+      method,
+      headers: body === null ? undefined : { 'Content-Type': 'application/json' },
+      body: body === null ? undefined : JSON.stringify(body),
+      signal: controller.signal
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+    if (!res.ok) {
+      const detail = data?.detail ? `：${data.detail}` : '';
+      throw new Error(`${data?.error || `HTTP ${res.status}`}${detail}`);
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * 构建绑定一次运行的工具集。
  * ctx: {
@@ -69,7 +101,7 @@ function imageParts(text, dataUrls) {
  * }
  */
 export function buildToolDefs() {
-  return [
+  const defs = [
     {
       name: 'send_message',
       description: '发送消息到当前聊天（本工具只能发到本次会话对应的群/私聊）。messages 传字符串=发一条；传字符串数组=分多条发送（推荐，更像真人）。只有需要明确"我回的是哪条"时才传 replyToMessageId 引用；需要点名某人才传 atUserId。不要在字符串内部用空格分句。',
@@ -511,6 +543,148 @@ export function buildToolDefs() {
       }
     }
   ];
+  // 没部署绘图服务时连工具都不暴露：省 token，也省得模型白调一次。
+  if (getConfig().imageGen?.enabled === true) defs.push(generateImageDef());
+  return defs;
+}
+
+/**
+ * 本次生成是谁要的（QQ 号）。拿不到返回 null。
+ *
+ * 来源是本次唤醒的触发消息列表 —— 正常对话下最后一条就是正在跟机器人说话的人。
+ * 主动开话题（proactive）时触发列表为空，返回 null，此时退化成按会话计冷却。
+ */
+function requesterIdOf(ctx) {
+  const trigger = ctx?.session?.trigger;
+  if (!Array.isArray(trigger) || !trigger.length) return null;
+  const last = trigger[trigger.length - 1];
+  const id = last?.senderId ?? last?.userId;
+  return id == null || String(id).trim() === '' ? null : String(id).trim();
+}
+
+/**
+ * 本地图片生成工具。只在 imageGen.enabled 为 true 时才会被 buildToolDefs 加进来。
+ *
+ * 设计取舍：生成完直接发到当前会话，而不是把图片塞回工具结果 ——
+ * 后者会让模型的上下文里多出几十万字符的 base64，成本和延迟都不划算。
+ */
+function generateImageDef() {
+  return {
+    name: 'generate_image',
+    description: '调用本机部署的绘图服务画一张图，并直接发到当前聊天。适用：群友明确要图（"帮我画…""来张…的图""生成一张…"）。prompt 必须写英文 danbooru 标签（例：1girl, silver hair, cherry blossoms, masterpiece, best quality）——先把对方的中文描述翻译成标签再传，不要直接传中文句子。' +
+      '画面比例用 ratio 参数：默认 1:1；对方说"竖版 / 立绘 / 手机壁纸"就用 3:4 或 9:16，"横版 / 风景 / 宽屏"就用 4:3 或 16:9，"全身"用 2:3。' +
+      '生成需要几秒到一分钟，期间不用发"正在画"之类的消息。',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: '英文 danbooru 标签，逗号分隔' },
+        ratio: {
+          type: 'string',
+          enum: ['1:1', '3:4', '4:3', '2:3', '3:2', '9:16', '16:9', '3:5', '5:3'],
+          description: '画面比例预设（推荐用它，不要自己算像素）。默认 1:1'
+        },
+        size: { type: 'integer', description: '可选：正方形边长（旧用法）。只有需要"非 512 的正方形"时才用；有比例需求请用 ratio' },
+        steps: { type: 'integer', description: '采样步数，默认取配置；范围 1~150' },
+        caption: { type: 'string', description: '可选：配在图片前面的中文一句话。不要写"已生成/请查收"这类汇报' }
+      },
+      required: ['prompt']
+    },
+    async execute(ctx, args) {
+      const cfg = getConfig().imageGen ?? {};
+      if (cfg.enabled !== true) return err('图片生成功能未开启（imageGen.enabled）');
+      const prompt = String(args.prompt ?? '').trim();
+      if (!prompt) return err('prompt 不能为空');
+      const maxChars = cfg.maxPromptChars ?? 600;
+      if (prompt.length > maxChars) return err(`prompt 过长（${prompt.length} > ${maxChars} 字符），请精简标签`);
+
+      const requester = requesterIdOf(ctx);
+      // 冷却按「人」而不是按「会话」：同一个群里 A 刚画完，不该把 B 也一起挡住
+      const cooldownKey = requester ? `${ctx.chatKey}:${requester}` : ctx.chatKey;
+      const cooldown = cfg.cooldownMs ?? 60000;
+      const last = imageGenLastAt.get(cooldownKey) ?? 0;
+      if (last && Date.now() - last < cooldown) {
+        return err(`刚生成过，请约 ${Math.ceil((cooldown - (Date.now() - last)) / 1000)} 秒后再画`);
+      }
+
+      const baseUrl = String(cfg.serviceUrl || '').trim();
+      if (!baseUrl) return err('imageGen.serviceUrl 未配置');
+
+      const body = {
+        prompt,
+        steps: Number(args.steps) || cfg.defaultSteps || 20,
+        // 绘图服务用这两个字段记录来源 + 做「按人冷却」；拿不到就传 null
+        session_id: ctx.chatKey || null,
+        user_id: requester
+      };
+      // 尺寸优先级：模型给的 ratio > 模型给的 size > 配置的默认 ratio >
+      // 配置的自定义宽高 > 旧的 defaultSize（兼容老配置）
+      if (args.ratio) body.ratio = String(args.ratio);
+      else if (args.size) body.size = Number(args.size);
+      else if (cfg.defaultRatio) body.ratio = String(cfg.defaultRatio);
+      else if (cfg.defaultWidth && cfg.defaultHeight) {
+        body.width = Number(cfg.defaultWidth);
+        body.height = Number(cfg.defaultHeight);
+      } else body.size = Number(cfg.defaultSize) || 512;
+
+      let jobId = '';
+      try {
+        const created = await drawingServiceFetch(baseUrl, '/api/v1/generate', {
+          method: 'POST',
+          body,
+          timeoutMs: 20000
+        });
+        jobId = String(created?.job_id ?? '');
+        if (!jobId) throw new Error('绘图服务没有返回 job_id');
+      } catch (error) {
+        return err(`连接绘图服务失败：${error?.message ?? error}。请确认绘图服务已启动`);
+      }
+
+      const totalMs = cfg.timeoutMs ?? 300000;
+      const deadline = Date.now() + totalMs;
+      let job = null;
+      while (Date.now() < deadline) {
+        await sleepMs(1500);
+        let snapshot = null;
+        try {
+          snapshot = await drawingServiceFetch(baseUrl, `/api/v1/job/${jobId}`, { timeoutMs: 15000 });
+        } catch (error) {
+          return err(`查询绘图进度失败：${error?.message ?? error}`);
+        }
+        if (['done', 'failed', 'cancelled'].includes(snapshot?.status)) { job = snapshot; break; }
+      }
+      if (!job) return err(`生成超时（超过 ${Math.round(totalMs / 1000)} 秒仍未完成），这次先放弃`);
+      if (job.status !== 'done') return err(`生成失败：${job.error || job.status}`);
+
+      let dataUrl = '';
+      try {
+        const imageUrl = new URL(job.image_url || `/api/v1/image/${jobId}.png`, baseUrl).toString();
+        const { url: safeUrl } = await validateFetchUrl(imageUrl, { allowPrivate: true });
+        const res = await fetch(safeUrl, { signal: AbortSignal.timeout(30000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buffer = Buffer.from(await res.arrayBuffer());
+        if (!buffer.length) throw new Error('图片内容为空');
+        dataUrl = `data:${detectMime(buffer) || 'image/png'};base64,${buffer.toString('base64')}`;
+      } catch (error) {
+        return err(`图片下载失败：${error?.message ?? error}`);
+      }
+
+      const caption = String(args.caption ?? '').trim();
+      try {
+        if (caption) await ctx.sender.sendTextBatch(ctx.chatKey, [caption]);
+        await ctx.sender.sendImage(ctx.chatKey, dataUrl, { label: prompt.slice(0, 40) });
+      } catch (error) {
+        return err(`图片发送失败：${error?.message ?? error}`);
+      }
+
+      imageGenLastAt.set(cooldownKey, Date.now());
+      return ok({
+        sent: true,
+        prompt,
+        elapsedSeconds: job.elapsed ?? null,
+        note: '图已发出。不要输出"已生成/已发送"之类的汇报，继续下一步或直接结束。'
+      });
+    }
+  };
 }
 
 /** 转成 OpenAI tools 参数格式。 */
