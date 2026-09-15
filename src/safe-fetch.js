@@ -99,13 +99,127 @@ export function isPrivateIp(ip) {
 }
 
 // ── 主机名校验（含 DNS） ────────────────────────────────────────────────
+//
+// ⚠️ 2026-09-12 修复「有时候识图失败：域名解析失败：DNS 解析超时」：
+// 老实现只用 dns.lookup（getaddrinfo）且只给 5 秒、不重试、不缓存。
+// 实测同一台机器解析多媒体图床 multimedia.nt.qq.com.cn：
+//     dns.lookup 冷启动 11066ms   ← getaddrinfo 走系统 DNS 客户端，冷启动极慢
+//     dns.resolve4          18ms   ← c-ares 直接问 DNS 服务器
+// 于是系统 DNS 缓存一过期（隔一段时间/重启后第一次取图），5 秒必爆。
+// 现在两条路一起跑、谁先给出地址用谁，再加重试、缓存与多 IP 回退。
 
-async function lookupWithTimeout(hostname) {
+const DNS_TTL_MS = 5 * 60 * 1000;   // 解析结果缓存 5 分钟
+const DNS_TIMEOUT_MS = 8000;        // 单次解析上限（getaddrinfo 冷启动实测可到 11s）
+const DNS_MAX_ATTEMPTS = 3;
+const MAX_IP_ATTEMPTS = 3;          // 一个域名常解析出十几个 IP，偶尔有连不通的节点
+
+const dnsCache = new Map();         // hostname -> { addresses: string[], at: number }
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, ms, message) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('DNS 解析超时')), 5000);
+    timer = setTimeout(() => reject(new Error(message)), ms);
   });
-  return Promise.race([dnsLookup(hostname, { all: true, verbatim: true }), timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** 第一个成功的结果胜出；其余尝试继续在后台跑完，不阻塞调用方。 */
+function firstSuccess(promises) {
+  return new Promise((resolve, reject) => {
+    let pending = promises.length;
+    let lastError = null;
+    if (!pending) {
+      reject(new Error('没有可用的解析方式'));
+      return;
+    }
+    for (const p of promises) {
+      p.then(resolve).catch((error) => {
+        lastError = error;
+        pending -= 1;
+        if (pending === 0) reject(lastError ?? new Error('解析失败'));
+      });
+    }
+  });
+}
+
+/**
+ * 单次解析：getaddrinfo 与 c-ares 竞速，谁先给出地址用谁。
+ * 两者互补 —— lookup 认 hosts 文件、能拿 IPv6；resolve4 快且不受 getaddrinfo 拖累。
+ */
+async function resolveOnce(hostname, { timeoutMs, lookup, resolve4 }) {
+  const attempts = [
+    withTimeout(
+      Promise.resolve()
+        .then(() => lookup(hostname, { all: true, verbatim: true }))
+        .then((rows) => {
+          const list = (Array.isArray(rows) ? rows : [rows])
+            .map((r) => (typeof r === 'string' ? r : r?.address))
+            .filter(Boolean);
+          if (!list.length) throw new Error('getaddrinfo 没有返回地址');
+          return list;
+        }),
+      timeoutMs,
+      'DNS 解析超时'
+    ),
+    withTimeout(
+      Promise.resolve()
+        .then(() => resolve4(hostname))
+        .then((list) => {
+          if (!Array.isArray(list) || !list.length) throw new Error('c-ares 没有 A 记录');
+          return list;
+        }),
+      timeoutMs,
+      'DNS 解析超时'
+    )
+  ];
+  const addresses = await firstSuccess(attempts);
+  return [...new Set(addresses)];
+}
+
+/**
+ * 解析主机名 → 去重后的地址列表（IPv4 优先）。
+ * lookup / resolve4 可注入，便于单测模拟「getaddrinfo 卡死、c-ares 秒回」的场景。
+ */
+export async function resolveHostAddresses(hostname, opts = {}) {
+  const {
+    timeoutMs = DNS_TIMEOUT_MS,
+    attempts: maxAttempts = DNS_MAX_ATTEMPTS,
+    lookup = dnsLookup,
+    resolve4 = dns.promises.resolve4,
+    cache = true
+  } = opts;
+  const key = String(hostname || '').toLowerCase();
+  if (!key) throw new Error('主机名为空');
+  if (cache) {
+    const hit = dnsCache.get(key);
+    if (hit && Date.now() - hit.at < DNS_TTL_MS) return hit.addresses.slice();
+  }
+  let lastError = null;
+  for (let i = 1; i <= maxAttempts; i++) {
+    try {
+      const addresses = await resolveOnce(key, { timeoutMs, lookup, resolve4 });
+      // IPv4 排前面：部分 CDN 的 AAAA 记录在纯 IPv4 网络下根本连不通
+      const sorted = [
+        ...addresses.filter((a) => net.isIP(a) === 4),
+        ...addresses.filter((a) => net.isIP(a) !== 4)
+      ];
+      if (cache) dnsCache.set(key, { addresses: sorted, at: Date.now() });
+      return sorted;
+    } catch (error) {
+      lastError = error;
+      if (i < maxAttempts) await sleep(200 * i);   // 200ms → 400ms 退避
+    }
+  }
+  throw lastError ?? new Error('域名解析失败');
+}
+
+/** 清空 DNS 缓存（测试用；正常情况下靠 5 分钟 TTL 自然过期）。 */
+export function clearDnsCache() {
+  dnsCache.clear();
 }
 
 async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
@@ -116,24 +230,24 @@ async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
   }
   if (net.isIP(h)) {
     if (!allowPrivate && isPrivateIp(h)) throw new Error('禁止访问内网/本机地址');
-    return h;
+    return [h];
   }
   let addresses;
   try {
-    addresses = await lookupWithTimeout(h);
+    addresses = await resolveHostAddresses(h);
   } catch (error) {
     throw new Error(`域名解析失败：${error?.message ?? error}`);
   }
   if (!addresses.length) throw new Error('域名没有解析结果');
   if (!allowPrivate) {
-    for (const { address } of addresses) {
+    for (const address of addresses) {
       if (isPrivateIp(address)) throw new Error('域名解析到内网/本机地址，已阻止');
     }
   }
-  return addresses[0].address;
+  return addresses;
 }
 
-/** 校验 URL 的 scheme 与主机（DNS 级）。返回 { url, ip }。 */
+/** 校验 URL 的 scheme 与主机（DNS 级）。返回 { url, ip, ips }。 */
 export async function validateFetchUrl(raw, { allowPrivate = false } = {}) {
   let url;
   try {
@@ -143,8 +257,8 @@ export async function validateFetchUrl(raw, { allowPrivate = false } = {}) {
   }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('仅允许 http/https');
   if (url.username || url.password) throw new Error('URL 不能包含凭据');
-  const ip = await resolveSafeHost(url.hostname, { allowPrivate });
-  return { url, ip };
+  const ips = await resolveSafeHost(url.hostname, { allowPrivate });
+  return { url, ip: ips[0], ips };
 }
 
 // ── 受限请求 ────────────────────────────────────────────────────────────
@@ -230,15 +344,35 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
 
 const MAX_REDIRECTS = 5;
 
+/**
+ * 依次尝试解析出的多个 IP，直到有一个连上。
+ * 一个 CDN 域名常解析出十几个地址，偶尔会有连不通的节点；
+ * 老实现固定用 addresses[0]，那一个不通整次取图/搜索就失败。
+ * 注意只在「连接层失败」（requestOnce reject）时换 IP —— HTTP 状态码不算失败。
+ * （导出供单测直接构造"第一个 IP 连不通"的场景）
+ */
+export async function requestWithFallback(url, ips, opts) {
+  const list = (Array.isArray(ips) && ips.length ? ips : [ips]).slice(0, MAX_IP_ATTEMPTS);
+  let lastError = null;
+  for (const ip of list) {
+    try {
+      return await requestOnce(url, ip, opts);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error('请求失败');
+}
+
 /** 抓取网页文本（≤50000 字符），SSRF 全防护（不做内网例外）。 */
 export async function safeFetch(urlString) {
-  let { url, ip } = await validateFetchUrl(urlString);
+  let { url, ips } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, { asBinary: false, maxBytes: 50000 });
+    const result = await requestWithFallback(url, ips, { asBinary: false, maxBytes: 50000 });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
-      ({ url, ip } = await validateFetchUrl(next));
+      ({ url, ips } = await validateFetchUrl(next));
       continue;
     }
     const body = result.body || '';
@@ -250,13 +384,13 @@ export async function safeFetch(urlString) {
 /** 下载二进制（图片，≤maxBytes 字节），返回 { buffer, contentType }。 */
 export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024) {
   const allowPrivate = getConfig().security?.allowPrivateImageHosts === true;
-  let { url, ip } = await validateFetchUrl(urlString, { allowPrivate });
+  let { url, ips } = await validateFetchUrl(urlString, { allowPrivate });
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, { asBinary: true, maxBytes });
+    const result = await requestWithFallback(url, ips, { asBinary: true, maxBytes });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
-      ({ url, ip } = await validateFetchUrl(next, { allowPrivate }));
+      ({ url, ips } = await validateFetchUrl(next, { allowPrivate }));
       continue;
     }
     if (result.statusCode !== 200) throw new Error(`HTTP ${result.statusCode}`);
