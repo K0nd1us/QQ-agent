@@ -1550,10 +1550,19 @@ export function createApp({ log = console.log } = {}) {
   // DSH 自动导入已移除：模型目录改为在设置页手动维护（见 /api/providers 相关接口）。
 
   // ── 启停 ──
+  /** 监听地址：默认 127.0.0.1（只本机可访问）；Docker / 反向代理在其他主机时用 server.host 放开。 */
+  function serverHost() {
+    return String(getConfig().server?.host || '127.0.0.1').trim() || '127.0.0.1';
+  }
+
+  function isLoopbackHost(host) {
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  }
+
   async function listenOn(port) {
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => {
+      server.listen(port, serverHost(), () => {
         server.off('error', reject);
         resolve(port); // 必须把实际端口传回去，Electron 壳要用它加载页面
       });
@@ -1604,7 +1613,12 @@ export function createApp({ log = console.log } = {}) {
     }
     await onebot.connect();
     if (getConfig().proactive?.enabled) orchestrator.startProactiveLoop();
-    log(`控制台已就绪：http://127.0.0.1:${port}`);
+    const host = serverHost();
+    log(`控制台已就绪：http://${host}:${port}`);
+    if (!isLoopbackHost(host) && !String(getConfig().server?.token || '').trim()) {
+      log(`警告：控制台监听在非本机地址（server.host=${host}）但没有设置 server.token，`
+        + '任何能访问该地址的人都能打开并修改控制台。请设置令牌，或用反向代理加一层认证（如 nginx auth_basic）。');
+    }
     log(`OneBot（SnowLuma）: ws=${getConfig().snowluma?.wsUrl} http=${getConfig().snowluma?.httpUrl}`);
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
     return port;
