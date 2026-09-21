@@ -1021,6 +1021,7 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
         <div class="snowluma-state-row muted">
           <span>目录：${esc(dir || '（未找到项目内 snowluma/ 文件夹）')}</span>
         </div>
+        ${s?.snowluma?.hint ? `<div class="snowluma-state-row" style="color:var(--warn)"><span>${esc(s.snowluma.hint)}</span></div>` : ''}
         <div class="snowluma-state-row">
           <span>WebUI：</span>
           ${webuiUrl
