@@ -1193,7 +1193,7 @@ refs:
 
     // 清理
     try {
-      const f = path.join(process.cwd(), 'data', 'messages', KEY.replace(':', '_') + '.json');
+      const f = path.join(dataDir, 'messages', KEY.replace(':', '_') + '.json');
       if (fs.existsSync(f)) fs.unlinkSync(f);
     } catch { }
     pass('未命中标记已读：消息沉入历史、不重复触发');
@@ -1237,13 +1237,13 @@ refs:
     // 后端权威派生：只传滑条位置，后端应算出档位与概率
     const { updateConfig } = await import('../src/config.js');
     const fs2 = await import('node:fs');
-    const backup = fs2.readFileSync('data/config.json', 'utf8');
+    const backup = fs2.readFileSync(path.join(dataDir, 'config.json'), 'utf8');
     try {
       const n = updateConfig({ store: { contextSliderPos: 55 } });
       assert.equal(n.store.contextTier, 3, '后端应把 55% 派生为 3 档');
       assert.ok(Math.abs(n.store.randomPercent - 50) < 1, '后端应把 55% 派生为 50% 概率');
     } finally {
-      fs2.writeFileSync('data/config.json', backup, 'utf8');
+      fs2.writeFileSync(path.join(dataDir, 'config.json'), backup, 'utf8');
     }
     pass('响应档位滑条：分区 + 概率线性 + 后端权威派生');
   }
