@@ -107,6 +107,73 @@ const USAGE_RANGES = [
 const CONSOLE_MARKER = 'qq-agent-console';
 
 /* ══════════════════════════════════════════════════════════════
+   控制台访问令牌（config.server.token）
+   ══════════════════════════════════════════════════════════════
+   后端 authorize() 在设置了 server.token 时会严格校验请求带的令牌，
+   而 CONSOLE_MARKER 只是"本机场景下的固定常量"（用于让请求带上自定义头，
+   从而无法被跨站简单请求伪造），它并不等于令牌。
+
+   所以设置 server.token 之后，浏览器必须能拿到真令牌，否则 /api/* 全部 401。
+   取值顺序：地址栏 ?token= → localStorage（打开一次即记住）。
+   地址栏里带过一次就立刻落盘，并从 URL 中抹掉 —— 避免令牌留在浏览历史、
+   截图或别人看到的地址栏里。
+*/
+const CONSOLE_TOKEN = (() => {
+  try {
+    let token = String(new URLSearchParams(location.search).get('token') || '').trim();
+    if (token) {
+      localStorage.setItem('qqa-console-token', token);
+      const params = new URLSearchParams(location.search);
+      params.delete('token');
+      const qs = params.toString();
+      history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : '') + location.hash);
+    } else {
+      token = String(localStorage.getItem('qqa-console-token') || '').trim();
+    }
+    return token;
+  } catch {
+    return '';   // 隐私模式 / 非浏览器环境：退化为仅用 marker
+  }
+})();
+
+/** 请求要带的令牌：有真令牌用真令牌，没有就沿用本机 marker。 */
+function consoleTokenHeader() {
+  return CONSOLE_TOKEN || CONSOLE_MARKER;
+}
+
+/**
+ * 401 引导：设了 server.token 但浏览器没有令牌时，光看控制台只会满屏报错。
+ * 这里直接给一个粘贴入口，存进 localStorage 后刷新即可。
+ */
+function showTokenGuide() {
+  if (document.getElementById('token-guide')) return;
+  const box = document.createElement('div');
+  box.id = 'token-guide';
+  box.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;'
+    + 'justify-content:center;background:rgba(0,0,0,.72);padding:24px;'
+    + 'font:14px/1.8 system-ui,-apple-system,"Segoe UI",sans-serif;color:#eee;text-align:center';
+  box.innerHTML = `<div style="max-width:560px">
+      <h2 style="margin:0 0 12px;font-size:18px">需要访问令牌</h2>
+      <p style="margin:0 0 6px">本服务已设置 <code>server.token</code>，控制台必须带令牌才能访问。</p>
+      <p style="margin:0 0 6px">也可以直接在地址后加 <code>?token=&lt;令牌&gt;</code> 打开（打开一次即记住）。</p>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <input id="token-guide-input" type="password" placeholder="粘贴 server.token"
+          style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid #555;background:#1b1b1b;color:#eee" />
+        <button id="token-guide-save"
+          style="padding:8px 14px;border-radius:6px;border:0;background:#3b82f6;color:#fff;cursor:pointer">保存并刷新</button>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  const input = box.querySelector('#token-guide-input');
+  box.querySelector('#token-guide-save').addEventListener('click', () => {
+    const value = String(input.value || '').trim();
+    if (!value) return;
+    try { localStorage.setItem('qqa-console-token', value); } catch { /* 忽略 */ }
+    location.reload();
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
    主题（明/暗/系统/？）
    ══════════════════════════════════════════════════════════════
    四种取值：'dark' | 'light' | 'system'（跟随系统偏好）| '?'（整活主题）。
@@ -199,13 +266,16 @@ async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: {
       'content-type': 'application/json',
-      'x-console-token': CONSOLE_MARKER,
+      'x-console-token': consoleTokenHeader(),
       ...(options.headers || {})
     },
     ...options
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 401) showTokenGuide();
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
   return data;
 }
 
@@ -443,7 +513,9 @@ function scheduleSessionRender() {
 
 // ── SSE ──
 function connectSSE() {
-  const es = new EventSource('/api/events');
+  // EventSource 不能带自定义请求头，令牌只能走 query（后端 authorize 支持 ?token=）
+  const qs = CONSOLE_TOKEN ? `?token=${encodeURIComponent(CONSOLE_TOKEN)}` : '';
+  const es = new EventSource(`/api/events${qs}`);
   es.addEventListener('session-start', () => {
     loadSessions();
     refreshStatus();
