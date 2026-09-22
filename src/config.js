@@ -197,7 +197,8 @@ export const DEFAULT_CONFIG = {
   // 桌面端/控制台
   server: {
     port: 3210,
-    token: '',                // 留空 = 只监听 127.0.0.1
+    host: '127.0.0.1',        // 监听地址。改成 0.0.0.0 才能被容器/其他主机访问（务必同时设 token）
+    token: '',                // 留空 = 不校验令牌（仅在 host 为本机地址时安全）
     autoStart: false,         // 开机自启（仅 Electron 桌面端生效）
     closeToTray: true         // 点关闭 = 最小化到托盘
   },
