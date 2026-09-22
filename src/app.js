@@ -89,6 +89,27 @@ export function createApp({ log = console.log } = {}) {
     return '';
   }
 
+  /**
+   * snowlumaDir() 为空时的可操作提示。
+   *
+   * 目录为空 → readSnowlumaTokenCandidates() 直接返回空数组 → 没有令牌候选 →
+   * 401 自愈（maybeRecoverOnebot）整条链路静默失效，界面上只剩一句
+   * "Unexpected server response: 401"，用户完全看不出问题出在哪。
+   *
+   * 实测最常见的成因是**协议端不是项目内置的那一份**：
+   *   - Linux 上 SnowLuma 官方只提供 Docker 镜像，项目目录里不会有 snowluma/；
+   *   - 用 NapCat / Lagrange 等第三方协议端时同理。
+   * 这时必须手填目录（指到协议端放 config/ 的地方）或直接手填令牌。
+   */
+  const SNOWLUMA_DIR_HINT = '未找到协议端程序目录（snowluma.dir 为空，且项目内没有 snowluma/ 文件夹）：'
+    + '请在「设置 → OneBot」填写协议端所在目录（需指向包含 config/ 的目录；Docker 部署时填挂载出来的数据卷路径），'
+    + '或者直接手填下面的 WebSocket / HTTP 令牌。';
+  let snowlumaDirWarned = false;
+
+  function snowlumaDirHint() {
+    return snowlumaDir() ? '' : SNOWLUMA_DIR_HINT;
+  }
+
   function snowlumaWsPort() {
     try {
       const wsUrl = String(getConfig().snowluma?.wsUrl || 'ws://127.0.0.1:3001');
@@ -168,7 +189,7 @@ export function createApp({ log = console.log } = {}) {
   /** 拉起 SnowLuma。优先用项目内置 node.exe 直接运行（日志进内置控制台）；失败再回退到独立窗口 launcher.bat。 */
   async function launchSnowluma() {
     const dir = snowlumaDir();
-    if (!dir) return { ok: false, error: '找不到 SnowLuma 目录：请确认项目内 snowluma/ 文件夹存在，或在设置里填写 SnowLuma 目录' };
+    if (!dir) return { ok: false, error: SNOWLUMA_DIR_HINT };
     const wsPort = snowlumaWsPort();
     if (await isPortOpen('127.0.0.1', wsPort)) {
       pushSnowlumaLog(`SnowLuma 已在运行（端口 ${wsPort} 已就绪），无需重复启动`, 'stdout');
@@ -312,7 +333,15 @@ export function createApp({ log = console.log } = {}) {
     const out = [];
     try {
       const dir = snowlumaDir();
-      if (!dir) return out;
+      if (!dir) {
+        // 只提示一次：401 自愈每 5 秒会走到这里，不限制会刷屏
+        if (!snowlumaDirWarned) {
+          snowlumaDirWarned = true;
+          log(`[onebot] ${SNOWLUMA_DIR_HINT}`);
+        }
+        return out;
+      }
+      snowlumaDirWarned = false;
       const cfgDir = path.join(dir, 'config');
       let files = [];
       try {
@@ -714,6 +743,7 @@ export function createApp({ log = console.log } = {}) {
           },
           snowluma: {
             dir: snowlumaDir(),
+            hint: snowlumaDirHint(),
             running: await isPortOpen('127.0.0.1', snowlumaWsPort()),
             webuiUrl: snowlumaWebuiUrl(),
             ...snowlumaStatus()
