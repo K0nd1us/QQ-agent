@@ -1447,6 +1447,30 @@ export function createRoutes(deps) {
       }
     },
     {
+      // 活跃会话缓冲总览（"沉默为界"）：哪些会话正在延续中
+      method: 'GET', pattern: '/api/continuations',
+      handler: async ({ res, json }) => json(res, 200, { continuations: orchestrator.listContinuations() })
+    },
+    {
+      // 某会话的缓冲状态（UI 显示"已延续 N 轮"）
+      method: 'GET', pattern: /^\/api\/chats\/(group|private)_(\d+)\/continuation$/,
+      handler: async ({ res, json, match }) => {
+        const chatKey = `${match[1]}:${match[2]}`;
+        return json(res, 200, { continuation: orchestrator.continuationFor(chatKey) });
+      }
+    },
+    {
+      // 手动「重开会话」：丢弃该会话 LLM 侧的对话历史（机器人自己的思考链），
+      // 下次触发走全新会话。**不动消息存档、不动记忆** —— 群里聊过的内容下次
+      // 仍会作为【已读信息】带过去，只是不再续用旧的 messages 前缀。
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/new-conversation$/,
+      handler: async ({ res, json, match }) => {
+        const chatKey = `${match[1]}:${match[2]}`;
+        const had = orchestrator.resetContinuation(chatKey);
+        return json(res, 200, { ok: true, had });
+      }
+    },
+    {
       // 部分清除：删除指定本地 id 的消息
       method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/delete-messages$/,
       handler: async ({ req, res, json, match }) => {

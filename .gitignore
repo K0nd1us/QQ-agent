@@ -48,4 +48,8 @@ release/
 .env.local
 community.key
 
+# AI 协作过程的本地工作区（记忆、日志等）：属开发过程稿，不是作品的一部分，
+# 与 .zcodeignore 里 findings/progress/task_plan 同一个性质
+.workbuddy/
+
 .goal-baseline/

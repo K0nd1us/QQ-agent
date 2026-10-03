@@ -578,18 +578,24 @@ export function buildTriggerBlock(triggerEntries, ctx) {
   return lines.join('\n');
 }
 
-// ── 提示词锚点（前缀缓存深化，2026-09-25）───────────────────────────────
+// ── 提示词锚点（前缀缓存深化）────────────────────────────────────────────
 //
-// 问题：连续触发（被连发 @ / 关键词 / 高档位）时，两次运行的【已读信息】+
-// 【记忆】高度相似但不相同 —— 标准结构里已读窗口整体向前滚动（BCDEF→CDEFG），
-// 缓存前缀每次都在已读信息头部就断掉，大头的 token 永远按全价计。
+// 问题：连续触发（被连发 @ / 关键词 / 高档位）时，两次运行的【已读信息】高度
+// 相似但不相同 —— 标准结构里已读窗口整体向前滚动（BCDEF→CDEFG），缓存前缀
+// 每次都在已读信息头部就断掉，大头的 token 永远按全价计。
 //
-// 解法：把上一轮实际发给模型的前缀**锚定**下来，本轮原样复用：
-//   · 【记忆】+【已读信息】= 锚点（字节不变，命中缓存）
+// 解法：把上一轮实际发给模型的【已读信息】**锚定**下来，本轮原样复用：
+//   · 【已读信息】= 锚点（字节不变，命中缓存）
 //   · 锚定窗口之后新沉淀的已读条目 →【新已读信息】（追加在锚点后）
-//   · 新增群友的印象 →【新加入成员】（未读信息之后，最易变区）
 //   · 追加条数超上限（promptAnchor.maxExtraRead）→ 整体重置回标准窗口，
 //     重新锚定 —— 已读按条计费，无限追加会"为了省钱花更多钱"。
+//
+// ⚠️ 2026-10-03（走 B）：锚点现在只管【已读信息】一个段。
+//   原设计的另一半是"【记忆】也进锚点"（靠 memberIds / 新成员→reset 冻结字节）。
+//   但记忆段实际上天天在变：成员顺序吃 updatedAt、内容随新印象增长 —— 是典型的
+//   不稳定段。把它放进前缀，等于每隔几轮就自我引爆一次。现在记忆已整体挪到
+//   【已读信息】**之后**，不再参与前缀，所以 memberIds 那套机制被删除，锚点
+//   回归成纯粹的"已读窗口字节复用"。
 //
 // ⚠️ 锚定轮**不受 historyCount 截尾**（2026-09-26 修）：
 //   第一版实现里，已读窗口先按 historyCount 滑动截尾（BCDEF→CDEFG），
@@ -600,10 +606,10 @@ export function buildTriggerBlock(triggerEntries, ctx) {
 //   historyCount 滑动窗口。"多带的那几条"就是追加预算，由 maxExtraRead 封顶。
 //
 // 判定"锚点是否仍可用"：
-//   · 锚点 readIds 的**第一条**仍在本轮滑动窗口内（锚点头未被滚出：
+//   · 锚点 readIds 的**第一条**仍在全量已读池里（锚点头未被滚出：
 //     一旦滚出，复用它会带上越来越老的内容，且追加预算迟早不够付）；
-//   · 锚点 id 之后的已读条数 ≤ maxExtraRead（追加预算内）；
-//   · 无新群友（记忆段成员集不变，字节前缀才可能不变）。
+//   · 锚点 id 序列与全量已读的某个前缀完全对齐（id 连续且顺序一致）；
+//   · 锚点之后的已读条数 ≤ maxExtraRead（追加预算内）。
 //   三者全满足 → anchored；任一不满足 → reset（本轮滑窗尾部预留追加额度，
 //   成为新锚点）。
 
@@ -616,33 +622,26 @@ export function buildTriggerBlock(triggerEntries, ctx) {
  *                                        缺省 = readMessages 本身）
  * @param {object}   p.prevAnchor     上一轮的锚点状态（chatKey 级持久，orchestrator 传入）；null = 无锚点
  * @param {number}   p.maxExtraRead   允许在锚定窗口之外额外追加的已读条数上限
- * @param {Set|null} p.newUserIds     本轮窗口里首次出现（不在锚点记忆成员集里）的群友 QQ
- * @param {Array}    [p.triggerEntries]  本轮触发批（reset 轮把其中的新群友收进锚点成员集）
  * @returns {{
  *   mode: 'none'|'anchored'|'reset',
- *   anchor: {readIds:number[], readCount:number, memberIds:string[]}|null,  // 写回 orchestrator 的新锚点状态
+ *   anchor: {readIds:number[], readCount:number}|null,   // 写回 orchestrator 的新锚点状态
  *   anchorMessages: Array,   // mode=anchored：锚点复用的已读条目（时间升序；从 allReadMessages 补齐）
  *   extraMessages: Array     // mode=anchored：锚定窗口之后追加展示的"新已读"条目
  * }}
  */
-export function resolvePromptAnchor({ readMessages = [], allReadMessages = null, prevAnchor = null, maxExtraRead = 5, newUserIds = null, triggerEntries = null } = {}) {
+export function resolvePromptAnchor({ readMessages = [], allReadMessages = null, prevAnchor = null, maxExtraRead = 5 } = {}) {
   const reads = Array.isArray(readMessages) ? readMessages : [];
   const pool = Array.isArray(allReadMessages) ? allReadMessages : reads;
   const cap = Math.max(0, Number(maxExtraRead) || 0);
-  const newIds = newUserIds instanceof Set ? newUserIds : null;
 
   // 无锚点 / 上轮锚点为空：本轮滑窗直接成为新锚点（mode=reset 表示"锚点从本轮开始"）。
   // 注意锚点取**全部窗口**（不截尾）：锚点 readIds = 全部已读 id —— 下一轮锚定
   // 复用时的"已读信息"就等于本轮发出去的，追加预算从这之后起算。
-  // ⚠️ 成员集取"全量已读池 + 本轮触发批"的成员：reset 的典型诱因就是新群友
-  // 加入 —— 他此刻在触发批里（已读池排除触发批，还收不到），下一轮他的消息
-  // 沉淀进已读池时若不在锚点成员集里，又会触发一次 reset，永远锚不住。
   const freshAnchor = () => ({
     mode: 'reset',
     anchor: {
       readIds: reads.map((m) => m.id),
-      readCount: reads.length,
-      memberIds: [...new Set([...collectMemberIds(pool), ...collectMemberIds(triggerEntries || [])])]
+      readCount: reads.length
     },
     anchorMessages: reads,
     extraMessages: []
@@ -651,11 +650,6 @@ export function resolvePromptAnchor({ readMessages = [], allReadMessages = null,
   if (!prevAnchor || !Array.isArray(prevAnchor.readIds) || !prevAnchor.readIds.length) {
     return freshAnchor();
   }
-
-  // 新群友出现：记忆段必须扩展（新成员的印象在锚点里没有），字节前缀必然变 → 重置。
-  // 重置后新成员进锚点 memberIds，后续轮次他又成为"老人"，可继续锚定。
-  const hasNewMember = newIds ? [...newIds].some((u) => !prevAnchor.memberIds?.includes(String(u))) : false;
-  if (hasNewMember) return freshAnchor();
 
   // 锚点条目从全量已读里找（滑窗截尾不影响锚点复用——锚定轮本就要带超过
   // historyCount 的条目）。锚点第一条必须在场，且锚点 id 序列必须与全量
@@ -678,25 +672,14 @@ export function resolvePromptAnchor({ readMessages = [], allReadMessages = null,
 
   return {
     mode: 'anchored',
-    // 锚点状态原样延续（readIds 不变；memberIds 并上本轮出现的全部成员，
-    // 理论上 anchored 时不会有新成员，并集只是防御）
+    // 锚点状态原样延续（readIds 不变）
     anchor: {
       readIds: prevAnchor.readIds.slice(),
-      readCount: prevAnchor.readCount,
-      memberIds: [...new Set([...(prevAnchor.memberIds || []), ...collectMemberIds(reads)])]
+      readCount: prevAnchor.readCount
     },
     anchorMessages,
     extraMessages
   };
-}
-
-/** 收集一批消息里出现的群友 QQ（排除机器人自己）。 */
-function collectMemberIds(messages) {
-  const out = new Set();
-  for (const m of messages || []) {
-    if (m && m.senderId && !m.self) out.add(String(m.senderId));
-  }
-  return [...out];
 }
 
 /**
@@ -726,29 +709,21 @@ export function buildUserPrompt(ctx) {
   const pastPool = buildPastState(ctx.store, ctx.chatKey, { excludeIds, limit: 500 });
 
   // ── 提示词锚点（前缀缓存深化）──
-  // 连续触发时把上一轮的【记忆】+【已读信息】前缀原样复用，新内容追加其后。
+  // 连续触发时把上一轮的【已读信息】前缀原样复用，新内容追加其后
+  // （【新已读信息】），构成"稳定前缀里最长的一段"。
   // 关闭（promptAnchor.enabled=false）或无锚点时，走标准结构（锚点从本轮建立）。
-  // 锚点决策对"相关群友"的口径有影响：锚定模式记忆段覆盖锚点成员集，
-  // 追加条目里出现的新群友印象放【新加入成员】段（靠后，不打断前缀）。
+  // ⚠️ 2026-10-03 走 B 后，锚点只负责【已读信息】这一个段 —— 【记忆】【可用表情包】
+  //    都已挪到它之后，不再参与前缀，所以也不再需要 memberIds / 新成员→reset 那套。
   const anchorCfg = cfg.store?.promptAnchor || {};
   const anchorEnabled = anchorCfg.enabled !== false;
   const anchorMaxExtra = Math.max(0, Number(anchorCfg.maxExtraRead) || 0);
   let anchorDecision = null;
   if (anchorEnabled) {
-    // 成员集差集：本轮全量已读 + 触发批里"锚点成员集"没有的群友 = 新加入话题的人
-    // （触发批也要算 —— 新群友第一次发言就是触发消息，漏算会错过 reset 的时机）
-    const prevMemberIds = new Set((ctx.promptAnchor?.prev?.memberIds || []).map(String));
-    const newUsers = new Set();
-    for (const m of [...(pastPool.messages || []), ...(ctx.triggerEntries || [])]) {
-      if (m.senderId && !m.self && !prevMemberIds.has(String(m.senderId))) newUsers.add(String(m.senderId));
-    }
     anchorDecision = resolvePromptAnchor({
       readMessages: past.messages,
       allReadMessages: pastPool.messages,
       prevAnchor: ctx.promptAnchor?.prev || null,
-      maxExtraRead: anchorMaxExtra,
-      newUserIds: newUsers,
-      triggerEntries: ctx.triggerEntries
+      maxExtraRead: anchorMaxExtra
     });
   }
 
@@ -773,56 +748,33 @@ export function buildUserPrompt(ctx) {
   // （此前该属性从未被赋值，导致 tools.js 的补偿恒为 0，翻页工具形同失效。）
   if (ctx.session && typeof ctx.session === 'object') ctx.session.pastStateCount = readShownCount;
 
-  // ── 段落排序按"变化频率"设计（前缀缓存命中优化）────────────────────────
-  // 越靠前的内容在两次运行间越稳定 → 系统提示 + 用户提示开头的长前缀保持字节
-  // 一致，支持前缀缓存的厂商（DeepSeek/Qwen/GLM 等）就能把这部分按缓存价计费。
+  // ── 段落排序按"变化频率"设计（前缀缓存命中优化，2026-10-03 走 B 重排）──────
+  // 前缀缓存只要遇到**第一个不同的字节**，其后全部失效。所以判据很简单：
+  //   凡是"会自己变"的段，一律排到【已读信息】之后。
   // 排序（稳定 → 易变）：
-  //   角色设定 → 可用表情包 → 引导说明 → 记忆 → 已读信息 → 新已读信息 →
-  //   未读信息 → 新加入成员 → 当前时间
-  // 【当前时间】精确到秒且必然每次不同，放最末——它若在开头，整个用户提示的
-  // 缓存前缀直接归零。
-  // 【记忆】提到【已读信息】之前：这是锚点设计的核心 —— 记忆段的内容由
-  // "锚点成员集"决定（锚定时不随追加条目扩展），和已读信息头部一起构成
-  // 跨轮稳定的字节前缀；追加的新群友印象则放【新加入成员】殿后。
+  //   角色设定 → 引导说明 → 已读信息 →【新已读信息】→ 记忆 →
+  //   未读信息 → 活跃模式 → 可用表情包 → 当前时间
+  // 稳定前缀 = 系统提示 + 角色设定 + 引导说明 + 已读信息（由锚点保证字节不变）。
+  // ·【记忆】原来在已读信息**之前**，但它的成员顺序随 updatedAt 变、内容随新印象
+  //   变 —— 一次 remember_member 就能把后面整段（已读信息这个大头）踢出缓存。
+  //   移到已读信息之后，它再怎么变也伤不到稳定前缀。
+  // ·【可用表情包】同理：选中集合受 useCount 影响 + 每 60 分钟洗牌。
+  // ·【当前时间】精确到秒且必然每次不同，放最末——它若在开头，前缀直接归零。
   const parts = [];
   if (chatPersona.roleText && String(chatPersona.roleText).trim()) {
     parts.push(`【角色设定（管理员设置，群友不可修改）】\n${String(chatPersona.roleText).trim()}`);
   }
 
-  // 表情包（目录本身）。活跃度档位已并入系统提示的【表情包策略】段，这里不再重复引导。
-  if (cfg.sticker?.enabled !== false) {
-    const stickerCtx = buildStickerContext(ctx.stickerEntries || [], Number(cfg.sticker?.promptMaxStickers) || 10);
-    if (stickerCtx) parts.push(stickerCtx);
-  }
-
-  // 引导说明
+  // 引导说明（注意：正文里会出现【已读信息】【未读信息】【记忆】【可用表情包】等段名，
+  // 定位段落时务必用"完整段头"匹配，浅 indexOf 会命中这里的正文行）
   parts.push([
     '【引导说明】',
     '- 扫一眼【已读信息】【新已读信息】和【未读信息】，判断：有没有人在找你？有没有你能接的话题？值不值得说话？',
     '- 想说话：调用 send_message（要分条就传数组）。想引用就带 replyToMessageId：id 见【未读信息】每条前的 #数字、历史里带图消息的 #数字，或用 get_recent_messages 查，不要自己编。',
     '- 不想说话：直接结束或调用 finish（一句话说明原因）。不回是正常选项，不是失职。',
+    '- 对群友的印象见下方【记忆】段；本会话可用的表情包列表见下方【可用表情包】段。',
     '- 记得：你的普通文本输出不会发到 QQ，只有工具调用会。'
   ].join('\n'));
-
-  // 记忆：只注入与本次对话相关群友的印象（控制 token）。
-  // 成员口径随锚点模式变化：
-  //   锚定 → 锚点成员集（不随追加条目扩展，保证前缀字节不变；新成员在【新加入成员】段）
-  //   标准 → 本轮全部窗口成员（触发者 + 已读窗口里出现的人）
-  const relevantUserIds = new Set();
-  if (anchored) {
-    for (const uid of (anchorDecision.anchor.memberIds || [])) relevantUserIds.add(String(uid));
-  } else {
-    for (const m of ctx.triggerEntries || []) {
-      if (m.senderId && !m.self) relevantUserIds.add(String(m.senderId));
-    }
-    for (const m of (past?.messages || [])) {
-      if (m.senderId && !m.self) relevantUserIds.add(String(m.senderId));
-    }
-  }
-  const memText = ctx.memory.formatForPrompt(ctx.chatKey, { userIds: [...relevantUserIds] });
-
-  // 记忆段（锚定模式的字节前缀从这段开始跨轮不变）
-  if (memText) parts.push(`【记忆】\n${memText}`);
 
   // 已读信息（锚定模式 = 锚点条目；标准模式 = 全部条目）
   const readHeaderText = anchored
@@ -845,6 +797,25 @@ export function buildUserPrompt(ctx) {
     parts.push('【已读信息】（暂无历史记录，这是你第一次参与这个会话）');
   }
 
+  // ── 【记忆】紧随【已读信息】之后（2026-10-03 走 B：挪出稳定前缀）──
+  // 记忆内容会随"谁在聊"变化（新印象写入、成员进出），是典型的**易变段**。
+  // 它排在【已读信息】之后 → 不再破坏"系统 + 角色设定 + 引导说明 + 已读信息"
+  // 这条跨轮稳定的缓存前缀（此前它排在已读信息之前，一次 remember 就把后面全废）。
+  // 成员口径统一为"本轮实际展示的已读条目 + 触发批里出现的人"——记忆已不参与
+  // 前缀构成，不需要再用"锚点成员集"去冻结它的字节。
+  const shownRead = anchored
+    ? [...readAnchorMessages, ...(readExtraMessages || [])]
+    : (readExtraMessages || []);
+  const relevantUserIds = new Set();
+  for (const m of ctx.triggerEntries || []) {
+    if (m.senderId && !m.self) relevantUserIds.add(String(m.senderId));
+  }
+  for (const m of shownRead) {
+    if (m.senderId && !m.self) relevantUserIds.add(String(m.senderId));
+  }
+  const memText = ctx.memory.formatForPrompt(ctx.chatKey, { userIds: [...relevantUserIds] });
+  if (memText) parts.push(`【记忆】\n${memText}`);
+
   // ── 此刻状态段已删除（2026-09-25 改版）──
   // 原"群名/最近消息密度/距上次发言 N 分钟"三行整体移除：这些信息模型
   // 从【已读信息】的时间戳和内容里能自然感知，单独罗列反而助长"汇报式"
@@ -854,16 +825,10 @@ export function buildUserPrompt(ctx) {
   const triggerBlock = buildTriggerBlock(ctx.triggerEntries, ctx);
   parts.push(`【未读信息】以下是你还没看过的最新消息（每条前的 #数字 是消息 id，引用回复/看图时用它）：\n${triggerBlock}`);
 
-  // 新加入成员：锚定模式下，追加窗口里首次出现的群友的印象（放在最易变区，
-  // 不打断前面的缓存前缀；标准模式没有此段 —— 全部成员已进【记忆】）
-  if (anchored) {
-    const extraMemberIds = collectMemberIds(readExtraMessages);
-    const newMembers = extraMemberIds.filter((uid) => !anchorDecision.anchor.memberIds?.includes(String(uid)));
-    if (newMembers.length) {
-      const newMemText = ctx.memory.formatForPrompt(ctx.chatKey, { userIds: newMembers });
-      if (newMemText) parts.push(`【新加入成员】以下是这轮新加入话题的群友，你对他们的印象：\n${newMemText}`);
-    }
-  }
+  // ── 【新加入成员】段已删除（2026-10-03 走 B）──
+  // 该段原是"锚定模式下把新群友印象殿后、以保护前缀"的补丁。记忆整段已挪到
+  // 【已读信息】之后，新成员的出现不再影响缓存前缀，这段失去存在意义。
+  // 新群友的印象照常出现在【记忆】里（成员口径已覆盖本轮展示的全部条目）。
 
   // ── 活跃模式（chatActive）────────────────────────────────────────────
   // 开关开启且本次触发的档位是 1/2/3 档时，orchestrator 会记录一个"活跃话题"
@@ -882,9 +847,64 @@ export function buildUserPrompt(ctx) {
 
   // 参与度已并入系统提示的【该说/不该说】，这里不再重复。
 
+  // ── 【可用表情包】放尾部（2026-10-03 走 B）──
+  // 它是参考材料，语义上放哪都行；但它的**选中文案会自己变**——选中集合的排序
+  // 用了 useCount（发一次表情就可能重排），且每 60 分钟按轮次洗牌（见 stickers.js）。
+  // 放在稳定区里会周期性把后面全部段落挤出缓存，所以挪到【已读信息】之后。
+  if (cfg.sticker?.enabled !== false) {
+    const stickerCtx = buildStickerContext(ctx.stickerEntries || [], Number(cfg.sticker?.promptMaxStickers) || 10);
+    if (stickerCtx) parts.push(stickerCtx);
+  }
+
   // 【当前时间】放最末：精确到秒、每次必变 —— 放前面会把整个用户提示的
   // 缓存前缀打断（模型知道"现在"的时效性靠这里，内容本身不受段落顺序影响）。
   parts.push(`【当前时间】${formatFullTime(now)}`);
 
+  return parts.join('\n\n');
+}
+
+/**
+ * 组装"延续轮"的用户消息（2026-10-03 ②P1）。
+ *
+ * 与 buildUserPrompt 的根本区别：**不带【已读信息】整窗**。那些内容已经在同一
+ * 会话的上下文里（上一轮的 messages 被原样复用），再发一遍等于双重计费 ——
+ * 延续轮的整个意义就是"只付增量的钱"。
+ *
+ * 因此这里只带"上一轮之后新出现的东西"：
+ *   未读信息（本批增量）+【记忆】（自己上轮可能刚写过印象）+
+ *   【活跃模式】（沿用全新会话的口径，模型要知道"偏离就 finish"）+【当前时间】
+ *
+ * 【角色设定】【引导说明】【可用表情包】都不重复带：它们仍在上下文里，
+ * 需要看全量表情包列表时模型可以调 list_stickers。
+ */
+export function buildContinuationPrompt(ctx) {
+  const now = Date.now();
+  const parts = [];
+  parts.push('【继续对话】以下是你刚收到的后续消息。你之前看过的内容仍在上文，不必重复，也无需重新自我介绍。');
+
+  // 未读信息（本轮增量）
+  const triggerBlock = buildTriggerBlock(ctx.triggerEntries, ctx);
+  parts.push(`【未读信息】以下是你还没看过的最新消息（每条前的 #数字 是消息 id，引用回复/看图时用它）：\n${triggerBlock}`);
+
+  // 记忆：可能刚被更新（自己上一轮写的印象），体积小，值得每轮带上
+  const relevantUserIds = new Set();
+  for (const m of ctx.triggerEntries || []) {
+    if (m.senderId && !m.self) relevantUserIds.add(String(m.senderId));
+  }
+  const memText = ctx.memory?.formatForPrompt?.(ctx.chatKey, { userIds: [...relevantUserIds] });
+  if (memText) parts.push(`【记忆】\n${memText}`);
+
+  // 活跃模式：与全新会话同口径（模型需要"偏离就结束"的判断要求）
+  if (ctx.activeTopic) {
+    parts.push([
+      '【活跃模式】当前处于"活跃期"：群里正在聊的话题大方向是',
+      `「${ctx.activeTopic}」`,
+      '——这是你之前总结的。先判断：新消息是否仍围绕这个大方向（或自然衍生）？',
+      '· 仍在方向上：正常接话，保持参与。',
+      '· 已偏离去别的话题 / 没人在聊了：立刻调用 finish 结束（参数 reason 填"话题结束"），回到潜水状态。'
+    ].join(' '));
+  }
+
+  parts.push(`【当前时间】${formatFullTime(now)}`);
   return parts.join('\n\n');
 }

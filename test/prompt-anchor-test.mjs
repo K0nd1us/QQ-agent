@@ -1,12 +1,14 @@
 // 提示词锚点（前缀缓存深化）单元测试：
 // 用 README 式的 ABCDEFGHIJ 例子逐轮驱动 buildUserPrompt，验证——
 //   1. 首轮建立锚点（reset：滑窗全量成为锚点，追加预算从这之后起算）
-//   2. 后续轮**字节前缀不变**（记忆+已读信息原样复用），新内容进【新已读信息】，
+//   2. 后续轮**字节前缀不变**（【已读信息】原样复用），新内容进【新已读信息】，
 //      已读部分可超过 historyCount（锚点 + 追加 ≤ 锚点 + maxExtraRead）
 //   3. 追加超过 maxExtraRead → 整体重置回标准滑窗
-//   4. 新群友加入 → 锚点重置（记忆扩展必然改前缀），新成员印象进【新加入成员】
+//   4. 新群友加入**不再**导致重置（2026-10-03 走 B：【记忆】已挪到【已读信息】
+//      之后，不进前缀；【新加入成员】段随之作废）
 //   5. 锚点头滚出存档窗口（隔太久没触发）→ 重置
 //   6. 关闭开关 → 永远标准结构，锚点状态不写入
+//   7. **缓存杀手回归**：两轮之间写一条记忆 + 换一批表情，稳定前缀必须逐字节一致
 // 纯离线：隔离数据目录 + MemoryStore/ChatStore 真实例。
 //
 // ⚠️ 2026-09-26 修：第一版实现拿"滑动截尾后的窗口头部"比对锚点 —— 滑动必然
@@ -55,11 +57,11 @@ function pushUnread(senderId, senderName, text) {
 }
 
 // 一次"运行"：trigger = 未读触发批；返回用户提示与会话（含锚点状态）
-function runOnce(triggerEntries, prevAnchor) {
+function runOnce(triggerEntries, prevAnchor, opts = {}) {
   const session = {};
   const up = buildUserPrompt({
     chatKey: CHAT, kind: 'group', chatId: '123', chatName: '测试群',
-    triggerEntries, store, memory, stickerEntries: [],
+    triggerEntries, store, memory, stickerEntries: opts.stickerEntries || [],
     selfNickname: '测试机', runSeq: 1, moreUnreadDuringRun: false, proactive: false,
     contextLimit: cfg.store.historyCount,
     promptAnchor: { prev: prevAnchor },
@@ -67,18 +69,17 @@ function runOnce(triggerEntries, prevAnchor) {
   });
   return { up, session };
 }
-// 前缀 = 从【记忆】到【未读信息】之前的字节。锚定轮的【新已读信息】属于
-// 追加部分（缓存前缀之后的字节），比较时剥掉 —— 前缀定义 = 记忆+已读信息。
-// ⚠️ 用完整段头定位：引导说明正文里引用了"【已读信息】【未读信息】"字样，
-// 浅 indexOf 会提前命中正文行，导致"未读在记忆之前"的假定位。
+// 前缀 = 【已读信息】这一整段（2026-10-03 走 B 后，稳定前缀里只剩它）。
+// 锚定轮的【新已读信息】属于追加部分（在缓存前缀之后），比较时剥掉。
+// ⚠️ 用完整段头定位：引导说明正文里引用了"【已读信息】【记忆】"字样，
+// 浅 indexOf 会提前命中正文行。
 const prefixOf = (up) => {
-  const s = up.indexOf('【记忆】\n');
-  const e = up.indexOf('【未读信息】以下是');
-  assert.ok(s >= 0 && e > s, '段落定位失败（缺记忆/未读信息段）');
-  let seg = up.slice(s, e);
-  const extra = seg.indexOf('【新已读信息】以下是');
-  if (extra >= 0) seg = seg.slice(0, extra);
-  return seg.replace(/\n+$/, '\n');   // 段间空行数不参与比较（reset 轮无追加段时结尾少一个空行）
+  const s = up.indexOf('【已读信息】以下是');
+  const eExtra = up.indexOf('【新已读信息】以下是');
+  const eMem = up.indexOf('【记忆】\n');
+  const e = eExtra >= 0 ? eExtra : eMem;
+  assert.ok(s >= 0 && e > s, '段落定位失败（缺已读信息 / 新已读信息 / 记忆段）');
+  return up.slice(s, e).replace(/\n+$/, '\n');   // 段间空行数不参与比较
 };
 const hasMsg = (up, x) => up.includes(`：${x}`);
 
@@ -94,7 +95,6 @@ assert.ok(!r1.up.includes('【新已读信息】以下是'), '首轮不应有新
 assert.ok(['B','C','D','E','F'].every((x) => hasMsg(r1.up, x)) && !hasMsg(r1.up, 'A'), '首轮滑窗 = BCDEF（historyCount=5）');
 // 锚点 = 本轮滑窗全部 5 条（BCDEF）—— 下一轮锚定复用它们，追加预算从 F 之后起算
 assert.equal(r1.session.promptAnchorState.readIds.length, 5, '锚点 = 全部滑窗条目');
-assert.ok(r1.session.promptAnchorState.memberIds.includes('uA') && r1.session.promptAnchorState.memberIds.includes('uB'), '锚点成员集 = 甲乙');
 const anchor1 = r1.session.promptAnchorState;
 const prefix1 = prefixOf(r1.up);
 
@@ -147,20 +147,17 @@ const r5 = runOnce([K], anchor4);
 assert.equal(r5.session.promptAnchorMode, 'anchored', '重置后的下一轮连续触发应再次锚定');
 assert.equal(prefixOf(r5.up), prefix4, '新锚点的前缀同样逐字节一致');
 
-// ═══ 场景 F：新群友加入话题 → 锚点重置 + 新成员印象进【新加入成员】段 ═══
-// 先从 anchor4 继续锚定一轮（无新成员），然后新群友丙发言
-const L = pushUnread('uA', '甲', 'L');
-const rL = runOnce([L], r5.session.promptAnchorState);
-assert.equal(rL.session.promptAnchorMode, 'anchored', '甲继续发言应保持锚定');
-const anchorL = rL.session.promptAnchorState;
-const M = pushUnread('uC', '丙', 'M');   // 丙首次发言（记忆里有印象但不在锚点成员集）
-const rM = runOnce([M], anchorL);
-assert.equal(rM.session.promptAnchorMode, 'reset', '新群友加入 → 重置（记忆段必须扩展）');
-// 重置后丙进锚点成员集 → 记忆段含丙；下一轮丙再发言可继续锚定
-assert.ok(rM.session.promptAnchorState.memberIds.includes('uC'), '重置后丙进入锚点成员集');
-const N = pushUnread('uC', '丙', 'N');
-const rN = runOnce([N], rM.session.promptAnchorState);
-assert.equal(rN.session.promptAnchorMode, 'anchored', '丙成为"老人"后继续锚定');
+// ═══ 场景 F：新群友加入话题 → 不再重置（记忆已挪出稳定前缀）═══
+// 走 B 前：新群友出现会让【记忆】扩展（新成员印象在锚点里没有）→ 字节前缀必变 → reset。
+// 走 B 后：【记忆】排在【已读信息】之后，不参与前缀，所以新群友**不影响锚定**。
+// 构造：紧接 r5（锚点 EFGHI + 追加 J，预算 2 尚余 1）让新群友丙发言。
+const M = pushUnread('uC', '丙', 'M');
+const rM = runOnce([M], r5.session.promptAnchorState);
+assert.equal(rM.session.promptAnchorMode, 'anchored', '新群友加入不再导致重置（记忆已不在前缀里）');
+assert.ok(rM.up.includes('丙的印象'), '新群友的印象照常出现在【记忆】段');
+assert.ok(rM.up.indexOf('【记忆】\n') > rM.up.indexOf('【已读信息】以下是'), '【记忆】必须落在【已读信息】之后');
+assert.equal(rM.session.pastStateCount, 7, '锚点 5 + 追加 2（J、K）');
+assert.ok(!rM.up.includes('【新加入成员】'), '【新加入成员】段已作废');
 
 // ═══ 场景 G：锚点头滚出存档窗口（太久没触发）→ 重置 ═══
 {
@@ -168,8 +165,8 @@ assert.equal(rN.session.promptAnchorMode, 'anchored', '丙成为"老人"后继�
   const r = resolvePromptAnchor({
     readMessages: [{ id: 999, senderId: 'uA', text: 'x' }],
     allReadMessages: [{ id: 998, senderId: 'uA', text: 'y' }, { id: 999, senderId: 'uA', text: 'x' }],
-    prevAnchor: { readIds: [1, 998], readCount: 2, memberIds: ['uA'] },
-    maxExtraRead: 2, newUserIds: new Set(['uA'])
+    prevAnchor: { readIds: [1, 998], readCount: 2 },
+    maxExtraRead: 2
   });
   assert.equal(r.mode, 'reset', '锚点头不在已读池 → 重置');
 }
@@ -181,17 +178,50 @@ assert.equal(rN.session.promptAnchorMode, 'anchored', '丙成为"老人"后继�
   const s = {};
   const up = buildUserPrompt({
     chatKey: CHAT, kind: 'group', chatId: '123', chatName: '测试群',
-    triggerEntries: [N], store, memory, stickerEntries: [],
+    triggerEntries: [M], store, memory, stickerEntries: [],
     selfNickname: '测试机', runSeq: 1, moreUnreadDuringRun: false, proactive: false,
     contextLimit: 5, promptAnchor: { prev: anchor1 }, session: s
   });
   assert.equal(s.promptAnchorMode, 'none', '关闭开关 → none');
   assert.equal(s.promptAnchorState, null, '关闭开关 → 不写锚点状态');
-  assert.ok(!up.includes('【新已读信息】以下是') && !up.includes('【新加入成员】以下是'), '关闭开关 → 无新段');
+  assert.ok(!up.includes('【新已读信息】以下是'), '关闭开关 → 无新已读段');
+  assert.ok(!up.includes('【新加入成员】'), '【新加入成员】段已作废');
   assert.ok(up.includes('【记忆】') && up.includes('【已读信息】'), '标准结构仍在');
-  // 标准结构滑窗 = 最近 5 条已读（IJKLM）
-  const readSec = up.slice(up.indexOf('【已读信息】以下是'), up.indexOf('【未读信息】以下是'));
-  assert.ok(['I','J','K','L','M'].every((x) => hasMsg(readSec, x)), '关闭开关 → 滑窗口径');
+  // 标准结构滑窗 = 最近 5 条已读（排除触发批 M → G,H,I,J,K）
+  const readSec = up.slice(up.indexOf('【已读信息】以下是'), up.indexOf('【记忆】\n'));
+  assert.ok(['G','H','I','J','K'].every((x) => hasMsg(readSec, x)), '关闭开关 → 滑窗口径');
+}
+
+// ═══ 场景 I：缓存杀手回归 —— 两轮之间写记忆 + 换表情，稳定前缀必须逐字节一致 ═══
+// 这是本次改动要修的核心问题。走 B 之前：【记忆】排在【已读信息】**之前**，
+// 一次 remember_member 就会改它的排序/内容，把后面整段（已读信息，token 大头）
+// 全部踢出缓存；【可用表情包】同理（useCount 参与选中集合排序 + 60 分钟轮换）。
+// 走 B 之后两者都在【已读信息】之后，稳定前缀应当纹丝不动。
+// ⚠️ 这条断言在改动前必然失败、改动后必须通过 —— 它就是问题的复现。
+{
+  cfg.store.promptAnchor.enabled = true;
+  cfg.sticker.enabled = true;
+  setRuntimeConfig(cfg);
+
+  const X1 = pushUnread('uA', '甲', 'X1');
+  const before = runOnce([X1], null);                       // 建立锚点（reset）
+  assert.equal(before.session.promptAnchorMode, 'reset', '首轮应为 reset');
+  const prefixBefore = prefixOf(before.up);
+
+  // 两轮之间发生两件"专打易变段"的事：
+  memory.append(CHAT, 'memberImpression', '甲刚又默默说了句什么', { userId: 'uA', target: '甲' });
+  const stickersAfter = [{ id: 'st9', desc: '全新表情', useCount: 99 }];
+
+  const X2 = pushUnread('uB', '乙', 'X2');
+  const after = runOnce([X2], before.session.promptAnchorState, { stickerEntries: stickersAfter });
+  assert.equal(after.session.promptAnchorMode, 'anchored', '第二轮应继续锚定');
+
+  // 先证明"易变段确实变了"，否则用例是空转
+  assert.ok(after.up.includes('甲刚又默默说了句什么'), '新印象应进入【记忆】段');
+  assert.ok(after.up.includes('全新表情'), '新表情应进入【可用表情包】段');
+
+  // 核心断言：稳定前缀逐字节不变
+  assert.equal(prefixOf(after.up), prefixBefore, '写记忆 + 换表情都不得改变稳定前缀（缓存杀手回归）');
 }
 
 try { fs.rmSync(__testDataDir, { recursive: true, force: true }); } catch { /* ignore */ }

@@ -24,7 +24,14 @@ async function check(name, fn) {
 }
 
 const env = await bootApp({
-  config: { store: { contextSliderPos: 0, historyCount: 80 }, wakeDelayMs: 400 }
+  config: {
+    // ⚠️ 本套件测的是**触发链路本身的语义**（逐条判定 / 聚批边界 / 已读-未读切分），
+    // 这些语义定义在"全新会话 + 完整窗口"这条路径上。2026-10-03 ②P1 引入的
+    // "会话延续"会把窗口换成增量（不再发【已读信息】整窗），语义就无从验证了。
+    // 所以这里显式关掉延续 —— 延续路径由 test/continuation-e2e-test.mjs 单独覆盖。
+    store: { contextSliderPos: 0, historyCount: 80, continuation: { enabled: false } },
+    wakeDelayMs: 400
+  }
 });
 const { app, pushGroupMsg, llm, request } = env;
 const unread = () => app.store.getChatMeta('group:456').unread;

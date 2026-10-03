@@ -375,14 +375,26 @@ refs:
   assert.strictEqual(sessionA.status, 'noreply', '运行 A 没有发言（正常选项）');
   assert.ok(onebotHttp.state.sends.every((s) => s.body.message.at(-1).data.text !== '（看看再说）'), '思考文本不会发到 QQ');
 
-  // drain：运行 A 结束后自动开新会话处理 9011
+  // drain：运行 A 结束后自动处理 9011。
+  // ⚠️ 2026-10-03 ②P1 起这条的语义变了：drain **不再**"新开一个全新的零历史会话"，
+  //    而是在沉默阈值内**延续同一场对话** —— 这正是"沉默为界"的核心收益：
+  //    机器人自己的思考链跨轮留在上下文里（海龟汤这类任务从此可用），成本靠
+  //    前缀缓存压住。所以 messages 不再是 2 条，而是"运行 A 的 messages + 增量"。
   await waitFor(() => llm.state.requests.length >= reqsBeforeA + 2, 6000, 'drain 运行开始');
   const drainReq = llm.state.requests.at(-1);
-  assert.strictEqual(drainReq.messages.length, 2, 'drain 运行同样是全新会话（零历史）');
-  assert.ok(drainReq.messages[1].content.includes('处理期间插进来的新消息'), 'drain 运行的【未读信息】是处理期间插入的消息');
-  assert.ok(!drainReq.messages[1].content.includes('在的"') || drainReq.messages[1].content.includes('我：在的'), '此前发言只以存档形式出现');
+  const prevReqA = llm.state.requests.at(-2);
+  assert.deepStrictEqual(
+    drainReq.messages.slice(0, prevReqA.messages.length),
+    prevReqA.messages,
+    'drain 运行应延续同一会话：以运行 A 的 messages 逐字节开头（前缀缓存的前提）'
+  );
+  assert.ok(drainReq.messages.length > prevReqA.messages.length, 'drain 运行应在末尾追加增量');
+  const drainDelta = drainReq.messages.at(-1);
+  assert.strictEqual(drainDelta.role, 'user', '增量应是一条 user 消息');
+  assert.ok(String(drainDelta.content).includes('处理期间插进来的新消息'), '续轮增量应含处理期间插入的消息');
+  assert.ok(!String(drainDelta.content).includes('【已读信息】'), '延续轮不重复【已读信息】整窗（否则双重计费）');
   await waitSessionDone('处理期间插进来的新消息');
-  pass('drain 循环：运行中新消息 → 结束后自动新开会话处理，每次 messages.length=2');
+  pass('drain 循环：运行中新消息 → 结束后延续同一会话处理（前缀复用 + 只追加增量）');
 
   const meta = app.store.getChatMeta('group:456');
   assert.strictEqual(meta.unread, 0, '所有消息已标记已读');
@@ -423,7 +435,11 @@ refs:
   assert.strictEqual(send3.body.message[0].data.id, '9001');
   assert.strictEqual(send3.body.message[1].data.text, '收到');
   const replyRunReq = llm.state.requests.at(-2);
-  assert.ok(replyRunReq.messages[1].content.includes('[引用 被引用者：被引用的原话]'), '引用原文被解析进上下文');
+  // 2026-10-03 ②P1：这轮可能落在"延续轮"上 —— 增量在最末一条 user 消息里，
+  // 不再固定在 messages[1]。所以拼全文找（要验证的是"模型能读到引用原文"）。
+  const replyPrompt = replyRunReq.messages
+    .map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n');
+  assert.ok(replyPrompt.includes('[引用 被引用者：被引用的原话]'), '引用原文被解析进上下文');
   pass('引用解析与 reply 段发送正确');
 
   // ── 场景 5：群友印象跨运行持久（无状态但记忆保留，且按相关成员注入） ──
@@ -440,7 +456,9 @@ refs:
   const reqs5b = llm.state.requests.length;
   pushGroupMsg(111, '张三', '我又来了', 9005);
   await waitFor(() => llm.state.requests.length >= reqs5b + 1, 5000, '带记忆的后续运行开始');
-  const memPrompt = llm.state.requests.at(-1).messages[1].content;
+  // 同上：延续轮里【记忆】出现在增量消息里，所以拼全文找
+  const memPrompt = llm.state.requests.at(-1).messages
+    .map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n');
   assert.ok(memPrompt.includes('张三喜欢聊今晚吃什么'), '【记忆】跨运行出现在相关成员发言的新会话提示词里');
   await waitSessionDone('我又来了');
   pass('群友印象跨运行持久化 + 相关成员注入');
@@ -553,7 +571,9 @@ refs:
   });
   await waitFor(() => {
     const latest = llm.state.requests.at(-1);
-    return latest?.messages?.[1]?.content?.includes('拍一拍');
+    // 2026-10-03 ②P1：这轮可能是延续轮，拍一拍内容在**增量**（最末一条 user）里
+    const last = latest?.messages?.at(-1);
+    return typeof last?.content === 'string' && last.content.includes('拍一拍');
   }, 8000, '拍一拍触发运行');
   await waitSessionDone('拍一拍');
   pass('拍一拍事件触发处理');
@@ -856,7 +876,10 @@ refs:
   });
   llm.state.script.push({ content: '（安静）' });
   pushGroupMsg(119, '阿九', '看看无视觉模型', 9029);
-  await waitFor(() => llm.state.requests.some((r) => String(r.messages?.[1]?.content || '').includes('看看无视觉模型')), 8000, '无视觉模型运行开始');
+  // 2026-10-03 ②P1：延续轮里触发文本在**增量**消息中，不再固定在 messages[1] ——
+  // 所以逐个 message 找（而不是只看 messages[1]）
+  const reqHas = (t) => (r) => (r.messages || []).some((m) => String(m.content || '').includes(t));
+  await waitFor(() => llm.state.requests.some(reqHas('看看无视觉模型')), 8000, '无视觉模型运行开始');
   const noVisionReq = llm.state.requests.at(-1);
   assert.ok(!noVisionReq.tools?.some((t) => t.function?.name === 'get_message_images'), 'no-vision 模型不带看图工具');
 
@@ -867,7 +890,7 @@ refs:
   });
   llm.state.script.push({ content: '（安静2）' });
   pushGroupMsg(120, '阿十', '看看有视觉模型', 9030);
-  await waitFor(() => llm.state.requests.some((r) => String(r.messages?.[1]?.content || '').includes('看看有视觉模型')), 8000, '视觉模型运行开始');
+  await waitFor(() => llm.state.requests.some(reqHas('看看有视觉模型')), 8000, '视觉模型运行开始');
   const visionReq = llm.state.requests.at(-1);
   assert.ok(visionReq.tools?.some((t) => t.function?.name === 'get_message_images'), 'vision 模型带看图工具');
   pass('模型图片输入探测 + 按模型门控看图工具');

@@ -181,7 +181,10 @@ c.section('4. 引用消息');
     });
     await waitFor(() => llm.state.requests.length > before, 6000, '引用消息触发');
     const req = llm.state.requests.at(-1);
-    const userText = String(req.messages[1].content);
+    // 2026-10-03 ②P1：这轮可能是"延续轮"—— 增量在最末一条 user 消息里，
+    // 不再固定在 messages[1]。拼全文来找（要验证的是"模型读得到这些内容"）。
+    const userText = String(req.messages
+      .map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n'));
     assert.ok(userText.includes('张三说的对'), '应含正文');
     assert.ok(userText.includes('被引用') || userText.includes('[引用'), '应把引用关系解析进提示词');
   });

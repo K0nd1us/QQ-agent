@@ -109,9 +109,10 @@ function renderChatMessages() {
   detail.innerHTML = `
     <div class="detail-header">
       <h2>${esc(name)} ${meta.unread ? `<span class="unread-pill">${meta.unread} 未读</span>` : ''}</h2>
-      <div class="sub"><span data-field="chat-msg-count"></span></div>
+      <div class="sub"><span data-field="chat-msg-count"></span><span data-field="chat-continuation"></span></div>
     </div>
     <div class="chat-toolbar">
+      <button class="btn btn-small" id="chat-newconv-btn" title="丢弃机器人对这段对话的上下文（LLM 侧历史），下一句从全新会话开始；不影响消息存档与群友印象">重开会话</button>
       <button class="btn btn-small" id="chat-del-mode-btn" title="选择部分消息删除">选择删除</button>
       <button class="btn btn-small btn-danger" id="chat-clear-btn" title="清空这个会话的全部消息存档">清空存档</button>
       <input type="text" id="test-send-text" class="inp" placeholder="手动发一条测试消息" style="flex:1;min-width:120px" />
@@ -129,6 +130,35 @@ function renderChatMessages() {
 
   // 工具栏事件：只在这里绑一次
   // （「全部标为已读 / 仅屏蔽」已移除：不触发的消息现在自动立即标已读）
+  // 延续状态（异步填充；失败静默 —— 它只是个提示，不该影响存档页可用性）
+  api(`/api/chats/${key.replace(':', '_')}/continuation`)
+    .then((d) => {
+      if (state.currentChatKey !== key) return;
+      const el = detail.querySelector('[data-field="chat-continuation"]');
+      if (el) el.textContent = d.continuation ? `· 会话延续中：${d.continuation.turns} 轮` : '';
+    })
+    .catch(() => { /* ignore */ });
+  // 重开会话（二次确认）：丢弃 LLM 侧的对话历史 —— 机器人"忘掉自己想过什么"，
+  // 下一句从全新会话开始。与「清空存档」的区别：消息存档与群友印象都不动。
+  $('#chat-newconv-btn').addEventListener('click', async () => {
+    let info = null;
+    try { info = (await api(`/api/chats/${key.replace(':', '_')}/continuation`)).continuation; } catch { /* 拿不到就按"无延续"提示 */ }
+    const detailLine = info
+      ? `当前这段对话已延续 ${info.turns} 轮（上下文约 ${info.messages} 条消息）。\n\n`
+      : '当前没有进行中的延续会话（重开仍然安全，只是没有可丢弃的上下文）。\n\n';
+    if (!(await uiConfirm(
+      `${detailLine}重开会话后，机器人会忘掉这段对话里自己想过、说过什么，下一句将从全新会话开始。\n消息存档与群友印象不受影响。\n\n确定重开吗？`,
+      { okText: '重开会话' }
+    ))) return;
+    try {
+      await api(`/api/chats/${key.replace(':', '_')}/new-conversation`, { method: 'POST', body: '{}' });
+      const el = detail.querySelector('[data-field="chat-continuation"]');
+      if (el) el.textContent = '';
+      alert('已重开会话：下一句将从全新会话开始。');
+    } catch (e) {
+      alert(`重开会话失败：${e.message}`);
+    }
+  });
   // 清空存档：删除这个会话的全部消息（不可恢复）
   $('#chat-clear-btn').addEventListener('click', async () => {
     const meta = state.chats.find((c) => c.key === key) || {};

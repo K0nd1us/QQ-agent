@@ -11,7 +11,7 @@
 import { getConfig, storeConfigForChat, personaForChat } from './config.js';
 import { vendorOfConfig } from './model-prices.js';
 import { randInt } from './util.js';
-import { buildSystemPrompt, buildUserPrompt, resolveContextTier } from './prompt.js';
+import { buildSystemPrompt, buildUserPrompt, buildContinuationPrompt, resolveContextTier } from './prompt.js';
 import { chatCompletion, chatCompletionWithRetry, addUsage, isRetryableError } from './llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool } from './tools.js';
 import { modelImageVerdict } from './vision-scan.js';
@@ -19,6 +19,7 @@ import { currentProviders } from './providers.js';
 import { skillManager } from './skills/manager.js';
 import { getToolAvailability } from './tool-registry.js';
 import { rescueUnsentReply } from './reply-rescue.js';
+import { ConversationStore, resolveSilenceMs, sameToolNames } from './conversation.js';
 
 export class Orchestrator {
   constructor({ store, memory, stickers, sender, sessions, onebot, emit = null, reminders = null, videoReader = null }) {
@@ -58,12 +59,17 @@ export class Orchestrator {
     // 自判"是否仍在话题上"，偏离/结束则 finish("话题结束") 退出活跃期。
     // 到期自动退出兜底（LLM 忘了判断也不会永远活跃）。
     this.activeTopics = new Map();
-    // ── 提示词锚点（前缀缓存深化，2026-09-25）──
-    // chatKey -> { readIds, readCount, memberIds }：上一轮发给模型的
-    // 【记忆】+【已读信息】前缀状态。下一轮 buildUserPrompt 据此判断能否
-    // 原样复用该前缀（连续触发时缓存命中）。#runAgent 结束时从
-    // session.promptAnchorState 取回新状态。重启丢失 = 回到标准结构，无害。
+    // ── 提示词锚点（前缀缓存深化）──
+    // chatKey -> { readIds, readCount }：上一轮发给模型的【已读信息】前缀状态。
+    // 下一轮 buildUserPrompt 据此判断能否原样复用该前缀（连续触发时缓存命中）。
+    // #runAgent 结束时从 session.promptAnchorState 取回新状态。重启丢失 = 回到
+    // 标准结构，无害。（2026-10-03 走 B 后 memberIds 已删除：记忆不再进前缀。）
     this.promptAnchors = new Map();
+    // ── 会话缓冲（"沉默为界"，2026-10-03 ②P1）──
+    // chatKey -> 活跃会话（systemPrompt / toolNames / messages）。
+    // 消息连续时不重开会话，在原 messages 上追加增量 —— 思考链因此能跨轮存活。
+    // 落盘在 data/conversations/，重启可续。
+    this.conversation = new ConversationStore();
     this.paused = false;
     this.pauseReason = null;
     this.proactiveTimer = null;
@@ -863,24 +869,8 @@ export class Orchestrator {
     this.sessions.update(session.id);
     this.emit('session-update', session.id);
 
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: proactive
-        ? `${userPrompt}\n\n【未读信息】（主动机会）群里已经安静了一会儿。你可以主动抛一个自然的话题（像随口说的，不要像播报），也可以判断没必要说话就安静结束。`
-        : userPrompt }
-    ];
-
-    // 让 Skill 加工即将发给模型的消息（如补充知识库片段）。
-    // hook 拿到的是同一个数组引用，允许原地修改，返回值忽略。
-    try {
-      await skillManager.runHook('before-llm-messages', { ...skillContext, messages });
-    } catch (error) {
-      skillManager.recordError('before-llm-messages', error);
-    }
-
-    // JSON 模式需要看到输入给模型的完整 messages（去工具之前）
-    session.inputMessages = structuredClone(messages.map((m) => ({ role: m.role, content: m.content })));
-    this.sessions.update(session.id);
+    // ⚠️ messages 的组装移到工具集过滤之后（见下方"会话延续决策"）——
+    //    因为要靠 toolNames 判断能否续用上一轮的会话缓冲，而工具集在这里才定型。
 
     // ── 工具集过滤：唯一口径 ──
     // 以前这里手写五层条件，加 Skill 后如果继续手写就会变成六层、两处各判一半。
@@ -903,6 +893,91 @@ export class Orchestrator {
       .map(([id, st]) => ({ id, code: st.code, reason: st.reason }));
     session.excludedTools = excluded;
     const openAiTools = toOpenAiTools(toolDefs);
+
+    // ── 会话延续决策（"沉默为界"，2026-10-03 ②P1）────────────────────────
+    // 群里消息连续（两次交互间隔 < 沉默阈值）→ 复用同一会话的 messages 前缀，
+    // 只追加增量：机器人自己的思考链天然留在上下文里（海龟汤这类"暗牌"任务
+    // 从此可用），成本靠前缀缓存压住（追加 = 前缀字节不变，命中部分按缓存价计）。
+    // 任一前提不满足 → 走 fresh（全新会话，行为与改动前完全一致）。
+    // ⚠️ 三个最关键的判据都在这里：沉默间隔、systemPrompt 逐字节相等、工具集不变。
+    //    任一变化都意味着"缓存前缀已经废了"，此时继续扛长上下文只会更贵。
+    const contCfg = cfg.store?.continuation || {};
+    const contEnabled = contCfg.enabled !== false;
+    const toolIds = toolDefs.map((d) => d.id).slice().sort();
+    const prevBuf = contEnabled ? this.conversation.get(chatKey) : null;
+    const silenceMs = resolveSilenceMs(contCfg, cfg.api || {});
+    const maxTurns = Math.max(1, Number(contCfg.maxTurns) || 30);
+    const maxChars = Math.max(2000, Number(contCfg.maxChars) || 240000);
+    const firstTs = Number(triggerEntries?.[0]?.ts) || Date.now();
+    const gapMs = prevBuf ? Math.max(0, firstTs - (Number(prevBuf.lastTurnAt) || 0)) : 0;
+
+    // fresh 的原因（写进会话记录 —— UI/排障一眼能看到"这次为什么没续上"）
+    let freshReason = '';
+    if (!contEnabled) freshReason = '会话延续已关闭';
+    else if (!prevBuf) freshReason = '无历史会话';
+    else if (prevBuf.systemPrompt !== systemPrompt) freshReason = '系统提示已变化（缓存前缀失效）';
+    else if (!sameToolNames(prevBuf.toolNames, toolIds)) freshReason = '工具集已变化（缓存前缀失效）';
+    else if (silenceMs > 0 && gapMs > silenceMs) {
+      freshReason = `沉默 ${Math.max(1, Math.round(gapMs / 60000))} 分钟 > 阈值 ${Math.round(silenceMs / 60000)} 分钟（缓存已过期）`;
+    } else if (prevBuf.turns >= maxTurns) freshReason = `已达轮次上限 ${maxTurns}`;
+    else if (prevBuf.chars >= maxChars) freshReason = '已达上下文体积上限';
+    const useBuffer = !freshReason;
+
+    let messages;
+    if (useBuffer) {
+      // 只追加增量：【已读信息】整窗不再重发（它就在上面的上下文里，重发=双重计费）
+      const deltaPrompt = buildContinuationPrompt({
+        chatKey, kind, chatId, chatName,
+        triggerEntries,
+        store: this.store,
+        memory: this.memory,
+        selfNickname,
+        activeTopic,
+        runSeq: seq
+      });
+      messages = [
+        { role: 'system', content: prevBuf.systemPrompt },
+        ...prevBuf.messages,
+        { role: 'user', content: deltaPrompt }
+      ];
+      session.userPrompt = deltaPrompt;
+      session.continuation = {
+        mode: 'continuation',
+        turns: (Number(prevBuf.turns) || 0) + 1,
+        startedAt: prevBuf.startedAt,
+        gapMs
+      };
+      // 延续轮**没有**发【已读信息】整窗 —— 刚才在构造 userPrompt 时算出的锚点状态
+      // 代表"一个我们其实没发出去的窗口"。留着它，等下次真的走 fresh 时会被当成
+      // "上一轮发过的前缀"复用，把窗口推成一段谁也没见过的形状。丢掉它，
+      // 下次 fresh 老老实实从本轮窗口重新锚定。
+      this.promptAnchors.delete(chatKey);
+    } else {
+      // 关闭旧缓冲：下次从零开始（②P2 会在这里蒸馏私有状态）
+      if (prevBuf) this.conversation.clear(chatKey);
+      messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: proactive
+          ? `${userPrompt}\n\n【未读信息】（主动机会）群里已经安静了一会儿。你可以主动抛一个自然的话题（像随口说的，不要像播报），也可以判断没必要说话就安静结束。`
+          : userPrompt }
+      ];
+      session.continuation = { mode: 'fresh', reason: freshReason || '首次会话' };
+    }
+    session.promptChars = messages.reduce(
+      (n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0
+    );
+
+    // 让 Skill 加工即将发给模型的消息（如补充知识库片段）。
+    // hook 拿到的是同一个数组引用，允许原地修改，返回值忽略。
+    try {
+      await skillManager.runHook('before-llm-messages', { ...skillContext, messages });
+    } catch (error) {
+      skillManager.recordError('before-llm-messages', error);
+    }
+
+    // JSON 模式需要看到输入给模型的完整 messages（去工具之前）
+    session.inputMessages = structuredClone(messages.map((m) => ({ role: m.role, content: m.content })));
+    this.sessions.update(session.id);
 
     const ctx = {
       chatKey, kind, chatId,
@@ -1021,14 +1096,18 @@ export class Orchestrator {
       const msg = response.message;
       const finalContent = typeof msg.content === 'string' ? msg.content : (msg.content ?? null);
       const finalToolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length ? msg.tool_calls : undefined;
+      // 发给模型的助手条目：**只带 OpenAI 规定的三个字段**。
+      // ⚠️ raw（原始响应体）绝不能进 messages —— 多轮工具调用时每一轮请求都会把
+      // 历史的助手条目再发一遍，带上 raw 等于把之前所有轮次的完整响应重复上传：
+      // 请求体无谓膨胀，而且这些字节随每轮响应变化，白白干扰前缀缓存。
+      // raw 只留在 session.messages 里（UI/排障要看，没人把它发回上游）。
       const assistantEntry = {
         role: 'assistant',
         content: finalContent,
-        tool_calls: finalToolCalls,
-        raw: response.raw ?? null
+        tool_calls: finalToolCalls
       };
       messages.push(assistantEntry);
-      session.messages.push(structuredClone(assistantEntry));
+      session.messages.push(structuredClone({ ...assistantEntry, raw: response.raw ?? null }));
       session.rounds = round + 1;
       markActivity('');
 
@@ -1255,6 +1334,23 @@ export class Orchestrator {
       // 给 UI 的简化消息流（跳过纯 tool 结果的重复展示）
     }
 
+    // ── 会话缓冲写回（②P1）──
+    // 存"去掉 system 的消息序列"（system 单独存，下一轮逐字节比对）。历史条目里
+    // 已经剥掉 raw（见上），否则每轮字节都变，前缀缓存白给。
+    // 出错/中止的会话不写：半截状态续下去只会更乱，下次直接从存档重建更安全。
+    if (contEnabled && !session.error) {
+      try {
+        this.conversation.save(chatKey, {
+          systemPrompt,
+          toolNames: toolIds,
+          messages: messages.slice(1),
+          turns: Number(session.continuation?.turns) || 1
+        });
+      } catch (error) {
+        console.warn('[orchestrator] 写会话缓冲失败:', error?.message ?? error);
+      }
+    }
+
     // 收尾：发过话 = done；没发 = noreply（这是正常选项）
     const status = session.error ? 'error' : (session.sent.length > 0 ? 'done' : 'noreply');
     this.sessionAbortControllers.delete(session.id);
@@ -1267,6 +1363,46 @@ export class Orchestrator {
       finishReason: session.finishReason,
       usage: session.usage
     });
+  }
+
+  // ── 会话缓冲（对外：UI 查询 / 手动重开）──────────────────────────────────
+  // 背景见 src/conversation.js。"沉默为界"靠它把同一场聊天的 messages 串起来，
+  // 让机器人的思考链能跨轮存活。
+
+  /** 列出全部活跃会话缓冲（UI 显示"哪些会话正在延续中"）。 */
+  listContinuations() {
+    return this.conversation.list();
+  }
+
+  /** 某会话的缓冲摘要（没有则 null）。供 UI 显示"已延续 N 轮"。 */
+  continuationFor(chatKey) {
+    const b = this.conversation.get(chatKey);
+    if (!b) return null;
+    const cfg = getConfig();
+    return {
+      chatKey: b.chatKey,
+      turns: b.turns,
+      chars: b.chars,
+      messages: b.messages.length,
+      startedAt: b.startedAt,
+      lastTurnAt: b.lastTurnAt,
+      silenceMinutes: Math.round(
+        resolveSilenceMs(cfg.store?.continuation || {}, cfg.api || {}) / 60000
+      )
+    };
+  }
+
+  /**
+   * 手动"重开会话"：丢弃该会话的活跃缓冲，下次触发走全新会话（UI 按钮入口）。
+   * 只清"LLM 侧的对话历史" —— **不动消息存档、不动记忆**：
+   * 群里聊过的内容下次仍会作为【已读信息】带过去，只是机器人自己的思考链归零。
+   */
+  resetContinuation(chatKey) {
+    const key = String(chatKey ?? '');
+    if (!key) return false;
+    const had = Boolean(this.conversation.get(key));
+    this.conversation.clear(key);
+    return had;
   }
 
   /**
