@@ -267,7 +267,7 @@ function renderSearchSection(c) {
   return `
     <h3 id="settings-search">搜索服务</h3>
     <div class="hint" style="margin-bottom:12px">
-      当前提供方：${prov === 'bing' ? 'Bing 网页解析' : prov === 'deepseek' ? 'DeepSeek 原生搜索' : prov === 'zhipu' ? '智谱 Web Search' : prov === 'bocha' ? '博查 AI Search' : prov === 'baidu' ? '百度千帆 AI Search' : prov === 'metaso' ? '秘塔 AI 搜索' : '自定义'}
+      当前提供方：${prov === 'bing' ? 'Bing 网页解析' : prov === 'deepseek' ? 'DeepSeek Responses 兼容搜索' : prov === 'zhipu' ? '智谱 Web Search' : prov === 'bocha' ? '博查 AI Search' : prov === 'baidu' ? '百度千帆 AI Search' : prov === 'metaso' ? '秘塔 AI 搜索' : '自定义'}
       ${(() => {
         // 当前提供方已保存的 Key 状态（与模型 API 页同款提示口径）
         const keyState = {
@@ -287,7 +287,7 @@ function renderSearchSection(c) {
     <div class="field"><label>搜索提供方</label>
       <select id="cfg-searchprovider">
         <option value="bing" ${prov === 'bing' ? 'selected' : ''}>Bing 网页解析</option>
-        <option value="deepseek" ${prov === 'deepseek' ? 'selected' : ''}>DeepSeek 原生搜索</option>
+        <option value="deepseek" ${prov === 'deepseek' ? 'selected' : ''}>DeepSeek Responses 兼容搜索</option>
         <option value="zhipu" ${prov === 'zhipu' ? 'selected' : ''}>智谱 Web Search</option>
         <option value="bocha" ${prov === 'bocha' ? 'selected' : ''}>博查 AI Search</option>
         <option value="baidu" ${prov === 'baidu' ? 'selected' : ''}>百度千帆 AI Search</option>
@@ -319,6 +319,10 @@ function renderSearchSection(c) {
           <button class="btn btn-small btn-danger" id="cfg-ds-searchkey-clear" type="button" title="清除已保存的 API Key（留空保存并不会清除，必须点这个按钮）">清除密钥</button>
         </div></div>
       <div class="field"><label>模型</label><input type="text" id="cfg-ds-searchmodel" value="${esc(c.webSearch?.deepseek?.model || 'deepseek-v4-flash')}" /></div>
+    </div>
+    <div class="field" id="deepseek-search-endpoint" style="${prov === 'deepseek' ? '' : 'display:none'}">
+      <label>Responses 搜索接口地址</label><input type="text" id="cfg-ds-searchurl" value="${esc(c.webSearch?.deepseek?.baseUrl || 'https://api.deepseek.com/responses')}" />
+      <div class="hint">官方 Responses API 忽略 web_search，不能用作联网搜索。兼容接口必须返回完成的搜索调用与真实来源；普通模型回答不会被当成搜索结果。</div>
     </div>
     <div class="field-row" id="zhipu-search-fields" style="${prov === 'zhipu' ? '' : 'display:none'}">
       <div class="field"><label>智谱 API Key（留空用环境变量 ZHIPU_API_KEY）</label>
