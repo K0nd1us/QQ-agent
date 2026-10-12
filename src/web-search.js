@@ -7,6 +7,8 @@
 //    合法配置。真正的远程输入（模型传进来的 query）已由 sanitizeQuery 清洗。
 import { getConfig } from './config.js';
 import { safeFetch } from './safe-fetch.js';
+import { JSDOM, VirtualConsole } from 'jsdom';
+import { extractWebPage } from './web-page.js';
 
 /** 查询词清洗：去 CQ 码、控制字符、超长截断。 */
 export function sanitizeQuery(query) {
@@ -75,23 +77,80 @@ async function fetchBingoResults(searchUrl, query, maxResults) {
   });
   if (!res.ok) throw new Error(`搜索服务 HTTP ${res.status}`);
   const html = await res.text();
-  return parseBingResults(html, maxResults);
+  const results = parseBingResults(html, maxResults);
+  if (results.length) return results;
+  // RSS fallback only for official Bing, never rewrite an administrator's custom service.
+  if (/(^|\.)bing\.com$/i.test(url.hostname)) {
+    url.searchParams.set('format', 'rss');
+    const fallback = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!fallback.ok) throw new Error(`搜索服务 HTTP ${fallback.status}`);
+    const rss = parseBingRssResults(await fallback.text(), maxResults);
+    if (rss.length) return rss;
+    throw new Error('Bing 页面没有可解析的搜索结果，可能是验证页或页面结构变化');
+  }
+  return [];
+
 }
 
-/** 从 Bing HTML 里解析 b_algo 块（纯函数，测试可直接驱动）。 */
+/** 还原 Bing 跟踪链接，向模型提供可抓取、可引用的原始来源 URL。 */
+export function resolveBingResultUrl(href) {
+  if (!String(href ?? '').trim()) return '';
+  try {
+    const url = new URL(href, 'https://www.bing.com');
+    if (/(^|\.)bing\.com$/i.test(url.hostname) && url.pathname === '/ck/a') {
+      const encoded = url.searchParams.get('u') || '';
+      if (encoded.startsWith('a1')) {
+        const decoded = new URL(Buffer.from(encoded.slice(2), 'base64url').toString('utf8'));
+        if (['http:', 'https:'].includes(decoded.protocol) && !decoded.username && !decoded.password
+          && !/(^|\.)bing\.com$/i.test(decoded.hostname)) return decoded.toString();
+      }
+      return '';
+    }
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return '';
+    if (/(^|\.)bing\.com$/i.test(url.hostname) && /^\/(?:search|ck|aclick)(?:\/|$)/i.test(url.pathname)) return '';
+    return url.toString();
+  } catch { return ''; }
+}
+
+/** DOM 解析兼容属性顺序、引号及多个 class；只取标题中的来源链接。 */
 export function parseBingResults(html, maxResults = 6) {
   const results = [];
-  for (const block of String(html ?? '').split('<li class="b_algo"').slice(1)) {
-    const hrefMatch = block.match(/<a[^>]+href="(https?:\/\/[^"]+)"/i);
-    if (!hrefMatch) continue;
-    const urlStr = decodeHtml(hrefMatch[1]);
-    const titleMatch = block.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
-    const title = titleMatch ? decodeHtml(titleMatch[1]) : '';
-    const snippetMatch = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-    const snippet = snippetMatch ? decodeHtml(snippetMatch[1]) : '';
-    if (urlStr && title) results.push({ title, url: urlStr, snippet });
-    if (results.length >= maxResults) break;
-  }
+  const dom = new JSDOM(String(html ?? ''), { virtualConsole: new VirtualConsole() });
+  try {
+    const seen = new Set();
+    for (const block of dom.window.document.querySelectorAll('li.b_algo')) {
+      const anchor = block.querySelector('h2 a[href]');
+      const url = resolveBingResultUrl(anchor?.getAttribute('href') || '');
+      const title = anchor?.textContent?.replace(/\s+/g, ' ').trim() || '';
+      const snippet = block.querySelector('.b_caption p,p')?.textContent?.replace(/\s+/g, ' ').trim() || '';
+      if (!url || !title || seen.has(url)) continue;
+      seen.add(url);
+      results.push({ title: title.slice(0, 250), url, snippet: snippet.slice(0, 700) });
+      if (results.length >= maxResults) break;
+    }
+  } finally { dom.window.close(); }
+  return results;
+}
+
+export function parseBingRssResults(xml, maxResults = 6) {
+  const results = [];
+  let dom;
+  try {
+    dom = new JSDOM(String(xml ?? ''), { contentType: 'text/xml', virtualConsole: new VirtualConsole() });
+    const seen = new Set();
+    for (const item of dom.window.document.querySelectorAll('rss channel item')) {
+      const title = item.querySelector('title')?.textContent?.trim() || '';
+      const url = resolveBingResultUrl(item.querySelector('link')?.textContent?.trim() || '');
+      if (!title || !url || seen.has(url)) continue;
+      seen.add(url);
+      const snippet = decodeHtml(item.querySelector('description')?.textContent || '');
+      const sourceDate = item.querySelector('pubDate')?.textContent?.trim() || '';
+      results.push({ title: title.slice(0, 250), url, snippet: snippet.slice(0, 700),
+        ...(sourceDate ? { sourceDate, dateNote: '搜索引擎提供的日期，需打开原文核对发布时间及事件日期' } : {}) });
+      if (results.length >= maxResults) break;
+    }
+  } catch { return []; }
+  finally { dom?.window.close(); }
   return results;
 }
 
@@ -172,8 +231,10 @@ export async function deepSeekSearch(query) {
  * （含重定向目标）是否在白名单内。web_fetch 工具曾经漏传这个参数，
  * 锁定开启时模型照样能抓任意站点，白名单形同虚设。 */
 export async function webFetch(url, { browseLocked = false } = {}) {
-  const result = await safeFetch(url, { browseLocked });
-  return result;
+  const result = await safeFetch(url, { browseLocked, maxBytes: 512 * 1024 });
+  if (result.statusCode < 200 || result.statusCode >= 300) throw new Error(`网页 HTTP ${result.statusCode}`);
+  const page = extractWebPage(result.body, result.url, { contentType: result.contentType });
+  return { ...result, ...page, truncated: result.truncated || page.truncated, fetchedAt: new Date().toISOString() };
 }
 
 /** 智谱 Web Search API（结构化结果：标题/链接/摘要/网站名/日期）。 */
