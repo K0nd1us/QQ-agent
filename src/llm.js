@@ -96,11 +96,11 @@ function specializedModelFor(messages, cfg) {
   }
   if (hasVideo) {
     const v = String(cfg?.api?.videoModel ?? '').trim();
-    if (v) return v;
+    if (v) return { model: v, kind: 'video' };
   }
   if (hasImage || hasVideo) {
     const v = String(cfg?.api?.visionModel ?? '').trim();
-    if (v) return v;
+    if (v) return { model: v, kind: 'vision' };
   }
   return '';
 }
@@ -119,6 +119,29 @@ function resolveProviderEndpoint(providerId) {
   if (!p || !String(p.baseURL ?? '').trim()) return null;
   const key = String(cfg.dshProviderKeys?.[pid] ?? p.apiKey ?? '').trim();
   return { baseUrl: String(p.baseURL).trim(), apiKey: key === '******' ? '' : key };
+}
+
+/** Keep a dedicated image/video model on its configured provider, including its own key. */
+export function resolveSpecializedApi(model, baseApi, cfg = getConfig(), kind = 'vision') {
+  const target = String(model || '').trim();
+  if (!target) return baseApi;
+  const hasModel = p => (p.models || []).some(m => String(typeof m === 'string' ? m : m?.id || m?.model || '') === target);
+  const explicitId = String(kind === 'video' ? cfg.api?.videoProvider || '' : cfg.api?.visionProvider || '').trim();
+  const current = (cfg.providers || []).find(p => p.id === baseApi.provider);
+  let provider = explicitId ? (cfg.providers || []).find(p => p.id === explicitId) : null;
+  if (explicitId && !provider) throw new Error('图片/视频专用模型的提供商配置不存在');
+  if (!explicitId && current && hasModel(current)) return { ...baseApi, model: target };
+  if (!explicitId) {
+    const matches = (cfg.providers || []).filter(hasModel);
+    if (matches.length > 1) throw new Error('图片/视频模型属于多个提供商，请指定专用提供商');
+    provider = matches[0];
+  }
+  // Manual endpoints and models absent from a catalogue retain the existing same-endpoint behavior.
+  if (!provider) return { ...baseApi, model: target };
+  const baseUrl = String(provider.baseURL || '').trim();
+  const rawKey = String(cfg.dshProviderKeys?.[provider.id] ?? provider.apiKey ?? '').trim();
+  if (!baseUrl || !rawKey || rawKey === '******') throw new Error('图片/视频专用提供商缺少接口地址或密钥');
+  return { ...baseApi, model: target, provider: provider.id, baseUrl, apiKey: rawKey };
 }
 
 /**
@@ -226,7 +249,7 @@ export async function chatCompletionWithRetry(args, retries = 2) {
         r._usedModel = r.model || (overrides?.model ?? getConfig().api?.model ?? '');
         // 把"这次实际用的端点"一并带回去：备选模型可能来自**另一个 provider**，
         // 调用方要据此同步 vendor，否则成本看板的「渠道：模型」聚合会串味。
-        r._usedApi = overrides ?? getConfig().api;
+        r._usedApi ??= overrides ?? getConfig().api;
         return r;
       } catch (error) {
         lastError = error;
@@ -293,7 +316,11 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
       skillManager.recordError('account-pool', error);
     }
     const forced = specializedModelFor(messages, getConfig());
-    if (forced && forced !== api.model) api = { ...api, model: forced };
+    if (forced) {
+      const dedicated = resolveSpecializedApi(forced.model, api, getConfig(), forced.kind);
+      if (dedicated.provider !== api.provider || dedicated.baseUrl !== api.baseUrl) poolAccountId = '';
+      api = dedicated;
+    }
   }
   const ctx = skillContext || { api, model: api.model, messages };
 
@@ -479,6 +506,9 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     degraded: Boolean(degradeNote),
     degradeNote
   };
+
+  const { apiKey: _privateKey, ...usedApi } = api;
+  result._usedApi = usedApi;
 
   // 响应加工：内置思考提取 + Skill 转换器（提取 reasoning、补统计等），错误隔离 + 串行。
   await applyResultTransforms(result, ctx);

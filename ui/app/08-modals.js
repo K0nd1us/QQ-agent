@@ -263,13 +263,12 @@ function openPersonaCreateModal() {
 function openModelConfigModal() {
   const c = state.config || {};
   const currentProvider = (state.providers || []).find((p) => p.id === c.api?.provider);
-  const displayOf = (modelId) => {
-    const m = String(modelId || '').trim();
-    if (!m) return '';
-    for (const p of (state.providers || [])) {
-      if ((p.modelNames || {})[m]) return p.modelNames[m];
-    }
-    return m;
+  const displayOf = (modelId, providerId) => {
+    const model = String(modelId || '').trim();
+    if (!model) return '';
+    const provider = (state.providers || []).find(p => p.id === providerId);
+    if (provider) return `${provider.displayName || provider.id} · ${provider.modelNames?.[model] || model}`;
+    return model;
   };
   const overlay = modelModalShell({
     head: '模型配置',
@@ -298,12 +297,12 @@ function openModelConfigModal() {
       <div class="field-row">
         <div class="field"><label>图片输入专用模型（留空用主模型）</label>
           <div style="display:flex;gap:8px">
-            <input type="text" id="mc-vision-model-pick" readonly placeholder="点击选择" value="${esc(displayOf(c.api?.visionModel))}" style="flex:1;cursor:pointer" />
+            <input type="text" id="mc-vision-model-pick" readonly placeholder="点击选择" value="${esc(displayOf(c.api?.visionModel, c.api?.visionProvider))}" style="flex:1;cursor:pointer" />
             <button class="btn btn-small" id="mc-vision-model-clear" type="button">清空</button>
           </div></div>
         <div class="field"><label>视频输入专用模型（留空用主模型）</label>
           <div style="display:flex;gap:8px">
-            <input type="text" id="mc-video-model-pick" readonly placeholder="点击选择" value="${esc(displayOf(c.api?.videoModel))}" style="flex:1;cursor:pointer" />
+            <input type="text" id="mc-video-model-pick" readonly placeholder="点击选择" value="${esc(displayOf(c.api?.videoModel, c.api?.videoProvider))}" style="flex:1;cursor:pointer" />
             <button class="btn btn-small" id="mc-video-model-clear" type="button">清空</button>
           </div></div>
       </div>
@@ -398,7 +397,8 @@ function openModelConfigModal() {
     });
     const pl = pickOverlay.querySelector('#msp-left');
     const pr = pickOverlay.querySelector('#msp-right');
-    let activePid = providers[0].id;
+    let activePid = overlay.querySelector('#' + fieldId).dataset.provider || c.api?.[which + 'Provider'] || c.api?.provider || providers[0].id;
+    if (!providers.some(p => p.id === activePid)) activePid = providers[0].id;
     const renderLeft = () => {
       pl.innerHTML = providers.map((p) =>
         `<div class="mm-prov ${p.id === activePid ? 'active' : ''}" data-pid="${esc(p.id)}">${esc(p.displayName || p.id)}</div>`).join('');
@@ -414,8 +414,9 @@ function openModelConfigModal() {
           <span class="muted" style="font-size:11px">${esc(m)}</span>
         </div>`).join('') || '<div class="muted" style="padding:10px">该提供商下没有模型</div>';
       pr.querySelectorAll('.mm-model').forEach((el) => el.addEventListener('click', () => {
-        overlay.querySelector('#' + fieldId).value = (names[el.dataset.model] || el.dataset.model);
+        overlay.querySelector('#' + fieldId).value = `${p.displayName || p.id} · ${names[el.dataset.model] || el.dataset.model}`;
         overlay.querySelector('#' + fieldId).dataset.model = el.dataset.model;
+        overlay.querySelector('#' + fieldId).dataset.provider = activePid;
         closeModelModal(pickOverlay);
       }));
     };
@@ -427,11 +428,11 @@ function openModelConfigModal() {
   overlay.querySelector('#mc-video-model-pick').addEventListener('click', () => pickSpecial('video'));
   overlay.querySelector('#mc-vision-model-clear').addEventListener('click', () => {
     const el = overlay.querySelector('#mc-vision-model-pick');
-    el.value = ''; delete el.dataset.model;
+    el.value = ''; el.dataset.model = ''; el.dataset.provider = '';
   });
   overlay.querySelector('#mc-video-model-clear').addEventListener('click', () => {
     const el = overlay.querySelector('#mc-video-model-pick');
-    el.value = ''; delete el.dataset.model;
+    el.value = ''; el.dataset.model = ''; el.dataset.provider = '';
   });
 
   // Key 显示/清除：与主页面同款（fetchRealKey 走 /api/providers/key）
@@ -515,8 +516,14 @@ function openModelConfigModal() {
     // 专用模型：dataset.model 里是干净的 id（没选过就删属性 = 走"保持原值"分支）
     const vEl = overlay.querySelector('#mc-vision-model-pick');
     const dEl = overlay.querySelector('#mc-video-model-pick');
-    if (vEl.dataset.model !== undefined || vEl.value === '') patch.visionModel = vEl.dataset.model || '';
-    if (dEl.dataset.model !== undefined || dEl.value === '') patch.videoModel = dEl.dataset.model || '';
+    if (vEl.dataset.model !== undefined || vEl.value === '') {
+      patch.visionModel = vEl.dataset.model || '';
+      patch.visionProvider = vEl.dataset.provider || '';
+    }
+    if (dEl.dataset.model !== undefined || dEl.value === '') {
+      patch.videoModel = dEl.dataset.model || '';
+      patch.videoProvider = dEl.dataset.provider || '';
+    }
     // Key：只在用户输入了非掩码明文时才回传（掩码/留空 = 保持）
     const raw = (overlay.querySelector('#mc-apikey').value || '').trim();
     if (raw && raw !== '******') patch.apiKey = raw;
@@ -569,28 +576,11 @@ function openModelPicker() {
       el.addEventListener('click', async () => {
         const pid = el.dataset.pid;
         const model = el.dataset.model;
-        // 同步规则：图片/视频专用模型如果指向**其它提供商**的旧模型，
-        // 主模型一换就再也对不上（识别请求会发到已弃用的端点）。
-        // 这里随主模型一起切换：专用模型属于同一提供商 → 跟随主模型 id；
-        // 属于别的提供商（用户特意挑的跨渠道视觉模型）→ 清空回退主模型。
-        // 用户在设置里明确填写的专用模型仍然优先，只有"跟随主模型"的
-        // 旧值才被替换 —— 判定依据：旧专用模型属于当前主提供商（跟随态）。
-        const cfg = state.config || {};
-        const oldProvider = cfg.api?.provider;
-        const oldVision = String(cfg.api?.visionModel || '').trim();
-        const oldVideo = String(cfg.api?.videoModel || '').trim();
-        const followsMain = (spec, oldPid) => spec === oldPid;
-        const visionModel = oldVision && followsMain(oldVision, oldProvider)
-          ? (pid === oldProvider ? model : '')
-          : oldVision;
-        const videoModel = oldVideo && followsMain(oldVideo, oldProvider)
-          ? (pid === oldProvider ? model : '')
-          : oldVideo;
         try {
           // 只更新 provider/model/baseUrl；apiKey 保持当前已保存值，不把密钥回写到接口请求里
           await api('/api/config', {
             method: 'POST',
-            body: JSON.stringify({ api: { provider: pid, model, baseUrl: p.baseURL, ...(visionModel !== oldVision ? { visionModel } : {}), ...(videoModel !== oldVideo ? { videoModel } : {}) } })
+            body: JSON.stringify({ api: { provider: pid, model, baseUrl: p.baseURL } })
           });
           closeModelModal(overlay);
           loadSettings();
