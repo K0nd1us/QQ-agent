@@ -330,6 +330,7 @@ export async function bootApp({ config = {}, script = [] } = {}) {
     maxConcurrentRuns: 2,
     send: { minGapMs: 10, maxGapMs: 20, byLengthMs: 0, maxPerMinute: 100, maxPerHour: 1000, hardSplitAt: 4000 },
     proactive: { enabled: false },
+    memory: { consolidateEnabled: false },
     sticker: { enabled: true, collectEnabled: true },
     store: { maxMessagesPerChat: 0, contextTier: 4, historyCount: 80, keepSessionFiles: 100 },
     server: { port: await freePort(), token: '' }

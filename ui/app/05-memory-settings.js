@@ -78,7 +78,7 @@ function renderMemoryList() {
         ? `${f.memberCount} 位群友 · ${f.impressionCount} 条印象`
         : '暂无群友印象');
     const delBtn = (f.memberCount || f.impressionCount)
-      ? `<button class="btn btn-small btn-danger mem-del-chat" data-key="${esc(key)}" title="删除本会话的全部记忆（所有群友的印象）">删除</button>`
+      ? `<button class="btn btn-small btn-danger mem-del-chat" data-key="${esc(key)}" title="移除本会话的成员关联，保留共享印象">删除</button>`
       : '';
     return `
       <div class="chat-item ${key === state.currentMemoryChatKey ? 'selected' : ''}" data-key="${esc(key)}">
@@ -106,7 +106,7 @@ function renderMemoryList() {
       const name = names[key] || key;
       const cnt = state.consolidating[key] ? 1 : 0;
       if (cnt) { alert('该会话记忆正在整理中，稍后再删'); return; }
-      if (!(await uiConfirm(`确定删除「${name}」的全部记忆？\n\n所有群友的印象都会被删除，此操作不可撤销。`))) return;
+      if (!(await uiConfirm(`确定移除「${name}」的成员关联？\n\n按 QQ 号保存的共享印象会保留，其他群和私聊仍可使用。`))) return;
       try {
         await api(`/api/memory-files/${encodeURIComponent(key.replace(':', '_'))}`, { method: 'DELETE' });
         if (state.currentMemoryChatKey === key) {
@@ -147,11 +147,11 @@ async function loadMemoryDetail(chatKey) {
           <span class="mem-who">${esc(who)}${qq}（${m.impressions.length} 条）</span>
           <span class="mem-actions">
             <button class="btn btn-small mem-edit-imp" data-qq="${esc(m.userId)}" data-name="${esc(m.name)}">编辑</button>
-            <button class="btn btn-small mem-refresh-imp" data-qq="${esc(m.userId)}" data-name="${esc(m.name)}" title="让模型重新分析这个人：有印象则整理合并，没印象则从聊天记录里提炼">更新记忆</button>
-            <button class="btn btn-small btn-danger mem-del-imp" data-qq="${esc(m.userId)}" data-name="${esc(m.name)}" title="删除这个人的全部印象">删除</button>
+            <button class="btn btn-small mem-refresh-imp" data-qq="${esc(m.userId)}" data-name="${esc(m.name)}" title="结合旧印象和新发言更新此 QQ 的共享印象" ${m.userId ? '' : 'disabled'}>更新记忆</button>
+            <button class="btn btn-small btn-danger mem-del-imp" data-qq="${esc(m.userId)}" data-name="${esc(m.name)}" title="删除此 QQ 在所有群和私聊中的共享印象" ${m.userId ? '' : 'disabled'}>删除</button>
           </span>
         </summary>
-        <div class="coll-body">${esc(imps)}</div>
+        <div class="coll-body"><div class="muted">${m.userId ? '此印象按 QQ 号共享，编辑和删除会影响所有群与私聊。' : '旧条目尚未确认 QQ 号，请先编辑绑定准确 QQ 号。'}</div>${esc(imps)}</div>
       </details>`;
     }).join('');
     // 整理状态从 state 恢复：切页签回来 / 刷新页面后依然可见
@@ -173,7 +173,7 @@ async function loadMemoryDetail(chatKey) {
       <div class="detail-header">
         <h2>${esc(formatChatTitle(chatKey, chatNameOf(chatKey)))} 的记忆</h2>
         <div class="sub">
-          <span>每个群友一个文件：data/memory/${esc(chatKey.replace(':', '_'))}/&lt;QQ&gt;.json</span>
+          <span>同一 QQ 在所有群与私聊中使用同一份印象</span>
           <button class="btn btn-small" id="mem-add-imp-btn">＋ 添加印象</button>
           <button class="btn btn-small" id="mem-consolidate-btn" ${busy ? 'disabled' : ''}>${busy ? '整理中…' : '整理本群记忆'}</button>
           ${consolidateStatusHtml}
@@ -199,7 +199,7 @@ async function loadMemoryDetail(chatKey) {
         e.stopPropagation();
         const uid = String(el.dataset.qq || '').trim();
         const name = el.dataset.name || uid;
-        if (!(await uiConfirm(`确定删除「${name}」的全部印象？此操作不可撤销。`))) return;
+        if (!(await uiConfirm(`确定删除 QQ ${uid}（${name}）的全部共享印象？所有群和私聊都将生效，此操作不可撤销。`))) return;
         try {
           await api(`/api/memory-files/${encodeURIComponent(chatKey.replace(':', '_'))}/members/${encodeURIComponent(uid)}`, { method: 'DELETE' });
           await loadMemoryDetail(chatKey);

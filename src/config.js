@@ -320,10 +320,13 @@ export const DEFAULT_CONFIG = {
     // 运行态（不在 UI 编辑）：{ [群号]: 禁言到期时间戳 }
     active: {}
   },
-  // 记忆自动整理：条数超阈值且距上次超过冷却时间时，在运行结束后后台合并/去重/删过时
+  // 记忆自动更新：按 QQ 号累计新发言，成员冷却后一次完成提取与整理
   memory: {
     consolidateEnabled: true,
-    consolidateMinIntervalMs: 21600000,  // 默认 6 小时
+    consolidateMinIntervalMs: 21600000,  // 每个 QQ 的更新冷却，默认 6 小时
+    memberUpdateMinMessages: 20,          // 跨群/私聊累计尚未分析的新发言
+    maxImpressionsPerMember: 5,
+    discoverMaxMembers: 3,               // 每批最多更新人数
     useChatModel: true,                   // true = 整理模型跟随聊天模型；false = 使用下方专用模型
     provider: '',                         // 专用模型所属提供商 id（useChatModel=false 时生效）
     model: ''                             // 专用模型 id（useChatModel=false 时生效）

@@ -389,9 +389,9 @@ function renderMemorySettingsSection(c) {
   const selP = providers.find((p) => p.id === mem.provider);
   const currentDisplay = selP ? `${selP.displayName || selP.id} · ${mem.model || '未选模型'}` : (mem.model || '未选模型');
   return `
-    <h3 id="settings-memory">记忆整理</h3>
+    <h3 id="settings-memory">印象更新</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-mem-consolidate" ${mem.consolidateEnabled !== false ? 'checked' : ''} />
-      <label for="cfg-mem-consolidate">启用记忆自动整理</label></div>
+      <label for="cfg-mem-consolidate">启用印象自动更新</label></div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-mem-usechat" ${useChat ? 'checked' : ''} />
       <label for="cfg-mem-usechat">使用与聊天机器人相同的模型</label></div>
     <div id="mem-model-box" style="${useChat ? 'display:none' : ''}">
@@ -404,8 +404,10 @@ function renderMemorySettingsSection(c) {
         <input type="hidden" id="cfg-mem-model" value="${esc(mem.model || '')}" />
       </div>
     </div>
-    <div class="field"><label>整理冷却时间（毫秒）</label><input type="number" id="cfg-mem-interval" min="1800000" step="600000" value="${esc(mem.consolidateMinIntervalMs ?? 21600000)}" /></div>
-    <div class="hint">条数超过阈值且距上次整理超过该冷却时间后，才会在运行结束后后台整理。默认 6 小时（21600000 毫秒）。</div>`;
+    <div class="hint">印象按 QQ 号在群聊和私聊间共享；新发言达到门槛且该成员冷却结束后自动更新。</div>
+    <div class="field"><label>每位成员累计新发言条数</label><input type="number" id="cfg-mem-min-messages" min="1" step="1" value="${esc(mem.memberUpdateMinMessages ?? 20)}" /></div>
+    <div class="field"><label>每位成员更新冷却时间（毫秒）</label><input type="number" id="cfg-mem-interval" min="60000" step="60000" value="${esc(mem.consolidateMinIntervalMs ?? 21600000)}" /></div>
+    <div class="hint">每位成员累计的新发言达到门槛，且距其上次成功更新超过冷却时间后，后台更新印象。默认 20 条、6 小时。</div>`;
 }
 
 function renderPersonaSection(c) {

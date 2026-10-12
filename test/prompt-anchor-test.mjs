@@ -39,9 +39,9 @@ const memory = new MemoryStore();
 const CHAT = 'group:123';
 
 // 成员记忆：甲乙两人各一条（丙不发消息但记忆里有 —— 不该进前缀）
-memory.append(CHAT, 'memberImpression', '甲的印象', { userId: 'uA', target: '甲' });
-memory.append(CHAT, 'memberImpression', '乙的印象', { userId: 'uB', target: '乙' });
-memory.append(CHAT, 'memberImpression', '丙的印象', { userId: 'uC', target: '丙' });
+memory.append(CHAT, 'memberImpression', '甲的印象', { userId: '111', target: '甲' });
+memory.append(CHAT, 'memberImpression', '乙的印象', { userId: '222', target: '乙' });
+memory.append(CHAT, 'memberImpression', '丙的印象', { userId: '333', target: '丙' });
 
 let mid = 1000;
 let ts = Date.now() - 100000;
@@ -83,10 +83,10 @@ const prefixOf = (up) => {
 const hasMsg = (up, x) => up.includes(`：${x}`);
 
 // 聊天记录 A~F（甲乙交替，均已读）
-'ABCDEF'.split('').forEach((t, i) => pushRead(i % 2 ? 'uB' : 'uA', i % 2 ? '乙' : '甲', t));
+'ABCDEF'.split('').forEach((t, i) => pushRead(i % 2 ? '222' : '111', i % 2 ? '乙' : '甲', t));
 
 // ═══ 轮 1：甲发 G（触发）。已读窗口 BCDEF（5 条滑窗）═══
-const G = pushUnread('uA', '甲', 'G');
+const G = pushUnread('111', '甲', 'G');
 const r1 = runOnce([G], null);
 assert.equal(r1.session.promptAnchorMode, 'reset', '首轮应为 reset（建立锚点）');
 assert.ok(r1.up.includes('【已读信息】'), '首轮应有已读信息段');
@@ -94,12 +94,12 @@ assert.ok(!r1.up.includes('【新已读信息】以下是'), '首轮不应有新
 assert.ok(['B','C','D','E','F'].every((x) => hasMsg(r1.up, x)) && !hasMsg(r1.up, 'A'), '首轮滑窗 = BCDEF（historyCount=5）');
 // 锚点 = 本轮滑窗全部 5 条（BCDEF）—— 下一轮锚定复用它们，追加预算从 F 之后起算
 assert.equal(r1.session.promptAnchorState.readIds.length, 5, '锚点 = 全部滑窗条目');
-assert.ok(r1.session.promptAnchorState.memberIds.includes('uA') && r1.session.promptAnchorState.memberIds.includes('uB'), '锚点成员集 = 甲乙');
+assert.ok(r1.session.promptAnchorState.memberIds.includes('111') && r1.session.promptAnchorState.memberIds.includes('222'), '锚点成员集 = 甲乙');
 const anchor1 = r1.session.promptAnchorState;
 const prefix1 = prefixOf(r1.up);
 
 // ═══ 轮 2：乙发 H（紧接触发，G 已沉淀为已读）═══
-const H = pushUnread('uB', '乙', 'H');
+const H = pushUnread('222', '乙', 'H');
 const r2 = runOnce([H], anchor1);
 assert.equal(r2.session.promptAnchorMode, 'anchored', '连续触发第二轮应锚定（核心场景）');
 // 【已读信息】= 锚点 BCDEF 原样（5 条，不受 historyCount 截尾）。
@@ -118,7 +118,7 @@ assert.equal(r2.session.pastStateCount, 6, '锚定轮 pastStateCount = 锚点+�
 const anchor2 = r2.session.promptAnchorState;
 
 // ═══ 轮 3：甲发 I（继续连续触发；追加将达到预算上限）═══
-const I = pushUnread('uA', '甲', 'I');
+const I = pushUnread('111', '甲', 'I');
 const r3 = runOnce([I], anchor2);
 assert.equal(r3.session.promptAnchorMode, 'anchored', '追加 = 预算上限（2 条：G、H）仍应锚定');
 assert.equal(prefixOf(r3.up), prefix1, '追加到预算上限时前缀仍逐字节一致');
@@ -128,7 +128,7 @@ assert.equal(r3.session.pastStateCount, 7, '锚定轮 pastStateCount = 5 锚点 
 const anchor3 = r3.session.promptAnchorState;
 
 // ═══ 轮 4：乙发 J（追加将超出预算 → 整体重置）═══
-const J = pushUnread('uB', '乙', 'J');
+const J = pushUnread('222', '乙', 'J');
 const r4 = runOnce([J], anchor3);
 assert.equal(r4.session.promptAnchorMode, 'reset', '追加将超出 maxExtraRead → 整体重置');
 assert.ok(!r4.up.includes('【新已读信息】以下是'), '重置轮无新已读段');
@@ -142,23 +142,23 @@ assert.notEqual(prefix4, prefix1, '重置轮前缀必然不同（滑窗滚动）
 const anchor4 = r4.session.promptAnchorState;
 
 // ═══ 轮 5：甲发 K（重置后再次连续触发 → 新前缀保持）═══
-const K = pushUnread('uA', '甲', 'K');
+const K = pushUnread('111', '甲', 'K');
 const r5 = runOnce([K], anchor4);
 assert.equal(r5.session.promptAnchorMode, 'anchored', '重置后的下一轮连续触发应再次锚定');
 assert.equal(prefixOf(r5.up), prefix4, '新锚点的前缀同样逐字节一致');
 
 // ═══ 场景 F：新群友加入话题 → 锚点重置 + 新成员印象进【新加入成员】段 ═══
 // 先从 anchor4 继续锚定一轮（无新成员），然后新群友丙发言
-const L = pushUnread('uA', '甲', 'L');
+const L = pushUnread('111', '甲', 'L');
 const rL = runOnce([L], r5.session.promptAnchorState);
 assert.equal(rL.session.promptAnchorMode, 'anchored', '甲继续发言应保持锚定');
 const anchorL = rL.session.promptAnchorState;
-const M = pushUnread('uC', '丙', 'M');   // 丙首次发言（记忆里有印象但不在锚点成员集）
+const M = pushUnread('333', '丙', 'M');   // 丙首次发言（记忆里有印象但不在锚点成员集）
 const rM = runOnce([M], anchorL);
 assert.equal(rM.session.promptAnchorMode, 'reset', '新群友加入 → 重置（记忆段必须扩展）');
 // 重置后丙进锚点成员集 → 记忆段含丙；下一轮丙再发言可继续锚定
-assert.ok(rM.session.promptAnchorState.memberIds.includes('uC'), '重置后丙进入锚点成员集');
-const N = pushUnread('uC', '丙', 'N');
+assert.ok(rM.session.promptAnchorState.memberIds.includes('333'), '重置后丙进入锚点成员集');
+const N = pushUnread('333', '丙', 'N');
 const rN = runOnce([N], rM.session.promptAnchorState);
 assert.equal(rN.session.promptAnchorMode, 'anchored', '丙成为"老人"后继续锚定');
 
@@ -166,10 +166,10 @@ assert.equal(rN.session.promptAnchorMode, 'anchored', '丙成为"老人"后继�
 {
   // 纯函数级：锚点第一条不在全量已读池里 → reset
   const r = resolvePromptAnchor({
-    readMessages: [{ id: 999, senderId: 'uA', text: 'x' }],
-    allReadMessages: [{ id: 998, senderId: 'uA', text: 'y' }, { id: 999, senderId: 'uA', text: 'x' }],
-    prevAnchor: { readIds: [1, 998], readCount: 2, memberIds: ['uA'] },
-    maxExtraRead: 2, newUserIds: new Set(['uA'])
+    readMessages: [{ id: 999, senderId: '111', text: 'x' }],
+    allReadMessages: [{ id: 998, senderId: '111', text: 'y' }, { id: 999, senderId: '111', text: 'x' }],
+    prevAnchor: { readIds: [1, 998], readCount: 2, memberIds: ['111'] },
+    maxExtraRead: 2, newUserIds: new Set(['111'])
   });
   assert.equal(r.mode, 'reset', '锚点头不在已读池 → 重置');
 }
