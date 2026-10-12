@@ -1,6 +1,7 @@
 // 总装：OneBot 事件接入 → 存储 → 编排器；HTTP API + SSE 给 UI。
 // Electron 主进程与 headless 服务器都从这里启动。
 import http from 'node:http';
+import { truncateText } from './unicode.js';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -815,7 +816,7 @@ export function createApp({ log = console.log } = {}) {
       }
       // senderId 一并带回：引用块显示为 名字(QQ:xxx)，与发言人标签同口径 ——
       // 没有它，模型分不清引用的是"哪个张三"
-      return { sender: String(senderName), senderId: String(msg?.sender?.user_id ?? ''), text: String(text).slice(0, 120) };
+      return { sender: String(senderName), senderId: String(msg?.sender?.user_id ?? ''), text: truncateText(String(text), 120) };
     } catch {
       return null;
     }
