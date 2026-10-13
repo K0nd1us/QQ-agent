@@ -608,7 +608,7 @@ function registerAllTools() {
   registerTool({
     id: 'get_message_images',
     name: '查看消息图片',
-    description: '查看某条消息里的图片/表情（视觉模型可以直接看懂）。消息文本出现 [图片] 时可用。id 用聊天记录里每条消息前的 #数字。',
+    description: '查看某条消息里的图片/表情，包含消息引用的原图（视觉模型可以直接看懂）。消息文本出现 [图片] 时可用；引用中有图片时，传当前这条回复的消息编号即可。id 用聊天记录里每条消息前的 #数字。',
     category: 'query',
     icon: '🖼️',
     requiresVision: true,
