@@ -677,7 +677,7 @@ function registerAllTools() {
   registerTool({
     id: 'memory_query',
     name: '查询印象',
-    description: '查看当前会话里你对群友的长期印象。不传 userId 返回全部；传 userId 只看某一个人。',
+    description: '印象按 QQ 号在所有群和私聊间共享。不传 userId 返回当前会话关联成员；传 userId 查询该 QQ 的共享印象。',
     category: 'memory',
     icon: '🔍',
     parameters: {
@@ -687,11 +687,11 @@ function registerAllTools() {
       }
     },
     async execute(ctx, args) {
-      const mem = ctx.memory.query(ctx.chatKey);
       const userId = String(args.userId ?? '').trim();
-      const list = userId
-        ? mem.memberImpression.filter((e) => String(e.userId) === userId)
-        : mem.memberImpression;
+      if (userId && !/^\d{1,15}$/.test(userId)) return err('userId 必须是数字 QQ 号');
+      const member = userId ? ctx.memory.getMember(ctx.chatKey, userId) : null;
+      const list = member ? member.impressions.map(e => ({ ...e, userId, target: member.name }))
+        : ctx.memory.query(ctx.chatKey).memberImpression;
       return ok({ memberImpression: list });
     }
   });

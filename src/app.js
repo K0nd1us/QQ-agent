@@ -1596,6 +1596,7 @@ export function createApp({ log = console.log } = {}) {
       }).catch(() => { /* 仍失败：连接层已尽力，UI 状态如实反映 */ });
     }, 45_000).unref?.();
     if (getConfig().proactive?.enabled) orchestrator.startProactiveLoop();
+    orchestrator.resumeMemoryUpdates();
     orchestrator.startReminderLoop();   // 提醒（闹钟）调度：到点往群里发提醒
     log(`控制台已就绪：http://127.0.0.1:${port}`);
     log(`OneBot（SnowLuma）: ws=${getConfig().snowluma?.wsUrl} http=${getConfig().snowluma?.httpUrl}`);

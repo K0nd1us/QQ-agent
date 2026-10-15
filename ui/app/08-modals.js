@@ -1241,6 +1241,7 @@ async function saveConfig({ quiet = false } = {}) {
       useChatModel: chk('#cfg-mem-usechat', c.memory?.useChatModel !== false),
       provider: val('#cfg-mem-provider', c.memory?.provider || '').trim(),
       model: val('#cfg-mem-model', c.memory?.model || '').trim(),
+      memberUpdateMinMessages: Math.max(1, Number(val('#cfg-mem-min-messages', c.memory?.memberUpdateMinMessages ?? 20)) || 20),
       consolidateMinIntervalMs: Number(val('#cfg-mem-interval', c.memory?.consolidateMinIntervalMs ?? 21600000)) || 21600000
     };
   }

@@ -37,7 +37,7 @@ function makeStore() {
     store.appendIncoming('group:123', {
       mid: 1000 + i,
       ts: Date.now() - (101 - i) * 60000,
-      senderId: `u${i % 5}`,
+      senderId: `100${i % 5}`,
       senderName: `群友${i % 5}`,
       text: i % 2 === 0 ? `这是第${i}条消息，比较长一点为了占用预算一点为了占用预算` : `消息${i}`,
       reply: i % 7 === 0 ? { sender: '某人', text: '引用内容' } : null
@@ -51,7 +51,7 @@ function makeStore() {
     store.appendIncoming('group:123', {
       mid: 2000 + i,
       ts: Date.now() - (4 - i) * 1000,
-      senderId: `u${i}`,
+      senderId: `100${i}`,
       senderName: `群友${i}`,
       text: `未读消息${i}`
     });
@@ -74,7 +74,7 @@ for (const banned of ['沉睡前观察', 'qq_wait_for_messages', 'qq_set_wake_co
 // （2026-09-25 改版：【此刻状态】删除、【过去状态】→【已读信息】、【本次唤醒】→【未读信息】。）
 const store = makeStore();
 const memory = new MemoryStore();
-memory.append('group:123', 'memberImpression', '喜欢猫', { userId: 'u1', target: '群友1' });
+memory.append('group:123', 'memberImpression', '喜欢猫', { userId: '1001', target: '群友1' });
 
 const unreadBefore = store.unreadCount('group:123');
 assert.strictEqual(unreadBefore, 3, '应有 3 条未读');
