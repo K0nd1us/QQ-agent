@@ -143,7 +143,7 @@ export function createChecker(title) {
 
 // ── Mock OneBot HTTP ─────────────────────────────────────────────────────
 export function createMockOneBotHttp() {
-  const state = { sends: [], pokes: [], calls: [] };
+  const state = { sends: [], pokes: [], calls: [], messages: new Map() };
   const TINY_PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
   const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
@@ -162,7 +162,17 @@ export function createMockOneBotHttp() {
       { user_id: 111, nickname: '张三', card: '张三' },
       { user_id: 113, nickname: '王五', card: '' }
     ]);
-    if (action === 'get_msg') return reply({ sender: { user_id: 9101, card: '被引用者', nickname: '被引用者' }, message: [{ type: 'text', data: { text: '被引用的原话' } }] });
+    if (action === 'get_msg') {
+      if (state.messages.has(String(body.message_id))) {
+        const message = state.messages.get(String(body.message_id));
+        if (message === null) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ status: 'failed', retcode: 100, wording: 'message unavailable' }));
+        }
+        return reply(message);
+      }
+      return reply({ sender: { user_id: 9101, card: '被引用者', nickname: '被引用者' }, message: [{ type: 'text', data: { text: '被引用的原话' } }] });
+    }
     if (action === 'get_forward_msg') {
       return reply({
         messages: [
@@ -192,7 +202,7 @@ export function createMockOneBotHttp() {
       state.sends.push({ action, body, at: Date.now() });
       return reply({ message_id: 5000 + state.sends.length });
     }
-    if (action === 'img.png') {
+    if (action.split('?')[0] === 'img.png') {
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(TINY_PNG);
       return;

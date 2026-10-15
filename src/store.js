@@ -11,7 +11,7 @@
 //   text:      解析后的纯文本（[图片] 等占位符已内联）
 //   self:      是否是机器人自己发的
 //   read:      已读状态（运行开始时批量置 true）
-//   reply:     可选 { sender, text }：该消息引用/回复的对象摘要
+//   reply:     可选 { messageId, media, sender?, text? }：引用定位及旧版摘要
 //   media:     可选 [{ kind, url, file, faceId, summary }] 原始媒体定位信息
 // }
 import fs from 'node:fs';
