@@ -1,0 +1,73 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import { EventEmitter } from 'node:events';
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-web-content-'));
+process.env.QQ_AGENT_DATA_DIR = dir;
+const originalFetch = globalThis.fetch;
+try {
+  const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/config.js');
+  const { parseBingResults, resolveBingResultUrl, parseBingRssResults, bingSearch } = await import('../src/web-search.js');
+  const { extractWebPage } = await import('../src/web-page.js');
+  const cfg = structuredClone(DEFAULT_CONFIG); setRuntimeConfig(cfg);
+  const target = 'https://official.example/notice?q=中文&version=1';
+  const tracking = 'https://www.bing.com/ck/a?u=a1' + Buffer.from(target).toString('base64url');
+  assert.equal(resolveBingResultUrl(tracking), new URL(target).toString());
+  for (const url of ['javascript:alert(1)', 'https://www.bing.com/search?q=spam', 'https://a:b@example.com', '', 'https://www.bing.com/ck/a?u=garbage']) assert.equal(resolveBingResultUrl(url), '');
+  const html = `<li data-other="1" class='result b_algo'><a href="https://wrong.example">菜单</a><h2><a href="${tracking}">测试 <b>公告</b></a></h2><div class="b_caption"><p>中文 &amp; 摘要</p></div></li>`;
+  const results = parseBingResults(html + html);
+  assert.equal(results.length, 1); assert.equal(results[0].url, new URL(target).toString());
+  assert.equal(results[0].title, '测试 公告'); assert.equal(results[0].snippet, '中文 & 摘要');
+  const rss = '<rss><channel><item><title>公告</title><link>https://official.example/rss</link><description>内容</description></item></channel></rss>';
+  assert.equal(parseBingRssResults(rss)[0].url, 'https://official.example/rss');
+  const calls = [];
+  globalThis.fetch = async url => { calls.push(String(url)); return new Response(calls.length === 1 ? '<html>验证页</html>' : rss); };
+  const searched = await bingSearch('测试');
+  assert.equal(searched.results[0].url, 'https://official.example/rss');
+  assert.equal(new URL(calls[1]).searchParams.get('format'), 'rss');
+  cfg.webSearch.searchUrl = 'https://custom.example/search'; calls.length = 0;
+  await assert.rejects(() => bingSearch('测试'), /没有解析/);
+  assert.equal(calls.length, 1, 'administrator custom URL is not rewritten');
+  const body = `<html><head><title>新闻</title><meta property="article:published_time" content="2026-10-01"><script type="application/ld+json">{"@type":"NewsArticle","dateModified":"2026-10-02"}</script></head><body><nav>导航垃圾</nav>${'<!-- padding -->'.repeat(4500)}<article><h1>正式公告</h1><p>真实正文 ${'中文内容'.repeat(50)}</p><script>globalThis.executed = true</script></article><footer>尾部垃圾</footer></body></html>`;
+  const page = extractWebPage(body, 'https://official.example/news', { contentType: 'text/html' });
+  assert.equal(page.title, '正式公告'); assert.equal(page.publishedTime, '2026-10-01'); assert.equal(page.modifiedTime, '2026-10-02');
+  assert.ok(page.body.includes('真实正文') && !page.body.includes('导航垃圾') && !page.body.includes('尾部垃圾'));
+  assert.equal(globalThis.executed, undefined);
+  const noDate = extractWebPage('<article><p>事件发生于昨天</p></article>', 'https://official.example');
+  assert.equal(noDate.publishedTime, '');
+  const text = extractWebPage('😀'.repeat(150), 'https://official.example', { contentType: 'text/plain', maxChars: 201 });
+  assert.ok(text.truncated); assert.ok(text.body.isWellFormed(), 'output truncation must not split emoji');
+  const { safeFetch } = await import('../src/safe-fetch.js');
+  const { webFetch } = await import('../src/web-search.js');
+  const originalRequest = http.request;
+  let responseBody = body, redirect = '', count = 0;
+  http.request = (options, callback) => {
+    count++;
+    assert.equal(options.hostname, '8.8.8.8');
+    const req = new EventEmitter();
+    req.end = () => queueMicrotask(() => {
+      const res = new EventEmitter();
+      res.statusCode = redirect ? 302 : 200;
+      res.headers = redirect ? { location: redirect } : { 'content-type': 'text/html; charset=utf-8' };
+      res.destroy = () => { res.destroyed = true; }; res.resume = () => {};
+      callback(res);
+      if (!redirect) queueMicrotask(() => { res.emit('data', Buffer.from(responseBody)); if (!res.destroyed) res.emit('end'); });
+    });
+    return req;
+  };
+  try {
+    const fetched = await webFetch('http://8.8.8.8/news');
+    assert.ok(fetched.body.includes('真实正文'), 'article beyond old 50 KB prefix is read before extracting text');
+    assert.equal(fetched.publishedTime, '2026-10-01');
+    responseBody = '中文'.repeat(100000);
+    const limited = await safeFetch('http://8.8.8.8/', { maxBytes: 100 });
+    assert.ok(Buffer.byteLength(limited.body) <= 100 && limited.body.isWellFormed() && limited.truncated);
+    redirect = 'http://127.0.0.1/private';
+    const before = count;
+    await assert.rejects(() => safeFetch('http://8.8.8.8/redirect'), /内网|本机/);
+    assert.equal(count, before + 1, 'private redirect is rejected before requesting the target');
+  } finally { http.request = originalRequest; }
+  console.log('PASS original source links, robust Bing HTML/RSS, static article/date extraction and bounded Unicode output');
+} finally { globalThis.fetch = originalFetch; fs.rmSync(dir, { recursive: true, force: true }); }

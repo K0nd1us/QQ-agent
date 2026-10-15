@@ -772,7 +772,7 @@ function registerAllTools() {
   registerTool({
     id: 'web_fetch',
     name: '抓取网页',
-    description: '只读抓取网页正文（≤2 万字符）。群友发来链接问"写了什么"时直接抓；配合 web_search 阅读搜索结果的详细内容。禁止访问内网/本机地址。',
+    description: '只读抓取网页正文（≤2 万字符），返回标题及页面声明的发布/更新时间；日期缺失不能猜测，发布时间不等于事件时间。群友发来链接问"写了什么"时直接抓；配合 web_search 阅读搜索结果的详细内容。禁止访问内网/本机地址。',
     category: 'web',
     icon: '📄',
     requiresSearch: true,
@@ -790,6 +790,8 @@ function registerAllTools() {
         return ok({
           url: result.url,
           statusCode: result.statusCode,
+          title: result.title, publishedTime: result.publishedTime, modifiedTime: result.modifiedTime,
+          fetchedAt: result.fetchedAt, extraction: result.extraction,
           truncated: result.truncated || body.length > 20000,
           content: body.slice(0, 20000)
         });
