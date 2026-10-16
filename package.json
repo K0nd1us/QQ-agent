@@ -52,7 +52,7 @@
     "setup": "node scripts/setup.mjs",
     "setup:check": "node scripts/setup.mjs --check",
     "setup:napcat": "node scripts/setup-napcat.mjs",
-    "test": "node test/selftest.mjs && node test/community-test.mjs && node test/skill-test.mjs && node test/onebot-whitelist-test.mjs && node test/sticker-collect-test.mjs && node test/message-id-test.mjs && node test/tools-skill-audit.mjs && node test/sticker-context.mjs && node test/skill-modal-ui.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs && node test/usage-daily-test.mjs && node test/test-prompt.mjs && node test/prompt-anchor-test.mjs && node test/wake-semantics-test.mjs && node test/setup-qq-version.mjs && node test/setup-download.mjs && node test/qq-pack.mjs && node test/qq-process-detect.mjs && node test/sender-file-uri-test.mjs && node test/sender-send-path-test.mjs && node test/vendor-mirror-test.mjs && node test/safe-fetch-file-test.mjs && node test/market-zip-test.mjs && node test/web-search-parse.mjs",
+    "test": "node test/selftest.mjs && node test/community-test.mjs && node test/skill-test.mjs && node test/onebot-whitelist-test.mjs && node test/sticker-collect-test.mjs && node test/message-id-test.mjs && node test/tools-skill-audit.mjs && node test/sticker-context.mjs && node test/skill-modal-ui.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs && node test/usage-daily-test.mjs && node test/test-prompt.mjs && node test/prompt-anchor-test.mjs && node test/wake-semantics-test.mjs && node test/setup-qq-version.mjs && node test/setup-download.mjs && node test/qq-pack.mjs && node test/qq-process-detect.mjs && node test/sender-file-uri-test.mjs && node test/sender-send-path-test.mjs && node test/vendor-mirror-test.mjs && node test/safe-fetch-file-test.mjs && node test/market-zip-test.mjs && node test/web-search-parse.mjs && node test/search-source-guard-test.mjs",
     "test:whitelist": "node test/onebot-whitelist-test.mjs",
     "test:sticker": "node test/sticker-collect-test.mjs",
     "test:msgid": "node test/message-id-test.mjs",
@@ -76,7 +76,8 @@
     "test:safefile": "node test/safe-fetch-file-test.mjs",
     "test:sender": "node test/sender-file-uri-test.mjs && node test/sender-send-path-test.mjs",
     "check:load": "node scripts/preload-check.mjs",
-    "test:wakesem": "node test/wake-semantics-test.mjs"
+    "test:wakesem": "node test/wake-semantics-test.mjs",
+    "test:search-sources": "node test/search-source-guard-test.mjs"
   },
   "dependencies": {
     "js-yaml": "^5.4.1",
