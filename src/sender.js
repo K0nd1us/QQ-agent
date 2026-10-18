@@ -381,8 +381,9 @@ export class SendQueue {
       await sleep(randInt(300, 900));
       const data = await this.onebot.sendPoke(kind, id, targetUserId);
       const ts = Date.now();
-      const target = kind === 'group' && targetUserId != null ? ` ${targetUserId}` : '对方';
-      this.store.appendSelf(chatKey, { text: `[拍一拍] 你拍了拍${target}`, ts, mid: data?.message_id ?? null });
+      const target = kind === 'group' ? String(targetUserId || id) : String(id);
+      const actor = this.onebot.selfId ? `我(QQ:${this.onebot.selfId})` : '我（机器人）';
+      this.store.appendSelf(chatKey, { text: `[拍一拍·机器人发出] ${actor} 拍了拍 对方(QQ:${target})`, ts, mid: data?.message_id ?? null });
       this.onSent?.({ chatKey, text: `[拍一拍]${target}`, messageId: null });
       return data;
     });

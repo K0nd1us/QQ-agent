@@ -458,6 +458,7 @@ function registerAllTools() {
         } else {
           await ctx.sender.poke(ctx.chatKey, null);
         }
+        ctx.session.sent.push({ type: 'poke', text: '[拍一拍·机器人发出]', at: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
         return ok({ poked: true });
       } catch (error) {
         return err(error?.message ?? error);

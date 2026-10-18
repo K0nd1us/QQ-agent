@@ -1,3 +1,4 @@
+import { normalizePokeEvent } from './poke-event.js';
 // 总装：OneBot 事件接入 → 存储 → 编排器；HTTP API + SSE 给 UI。
 // Electron 主进程与 headless 服务器都从这里启动。
 import http from 'node:http';
@@ -973,21 +974,17 @@ export function createApp({ log = console.log } = {}) {
   }
 
   async function ingestPoke(event) {    // OneBot v11: notice_type=notify, sub_type=poke；群拍 target_id，私聊拍自己
-    const isGroup = event.group_id != null;
-    const id = isGroup ? String(event.group_id) : String(event.user_id);
+    const poke = normalizePokeEvent(event, onebot.selfId);
+    if (!poke) return; // Own echo or ambiguous identity must never wake the model.
+    const { isGroup, id, operatorId, targetId, selfId } = poke;
     const cfgNow = getConfig();
     if (!allowed(isGroup ? 'group' : 'private', id, cfgNow)) return;
 
-    const operatorId = String(event.user_id ?? '');
-    // 自己拍的拍（send_poke 的 OneBot 回显）不触发处理——与 message_sent 同理，发送时已留档
-    if (operatorId && operatorId === onebot.selfId) return;
     // 屏蔽名单对拍一拍同样生效（操作者是被屏蔽群员则丢弃）：全局优先，其次按群
     if (operatorId) {
       if (isGloballyBlocked(operatorId)) return;
       if (isGroup && (cfgNow.blocklist?.[id] || []).map(String).includes(operatorId)) return;
     }
-    const targetId = String(event.target_id ?? event.user_id ?? '');
-    const selfId = onebot.selfId;
     // 拍一拍也要记下真实群名片：原先这里硬编码"（拍一拍事件）"，
     // 会覆盖同一 QQ 在普通消息里的真实昵称 —— 记忆整理时取名字会拿到这个占位符，
     // 导致"317183522 的名字叫（拍一拍事件）"这种脏数据。
