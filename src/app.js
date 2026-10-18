@@ -808,14 +808,16 @@ export function createApp({ log = console.log } = {}) {
       const msg = await onebot.getMsg(messageId);
       const senderName = msg?.sender?.card || msg?.sender?.nickname || '';
       let text = '';
+      let media = [];
       if (Array.isArray(msg?.message)) {
-        text = msg.message.map((s) => (s.type === 'text' ? s.data?.text ?? '' : `[${s.type}]`)).join('').trim();
+        text = await segmentsToText(msg.message, { includeReply: false });
+        media = extractMediaFromSegments(msg.message).filter(m => m.kind === 'image');
       } else if (typeof msg?.message === 'string') {
         text = msg.message;
       }
       // senderId 一并带回：引用块显示为 名字(QQ:xxx)，与发言人标签同口径 ——
       // 没有它，模型分不清引用的是"哪个张三"
-      return { sender: String(senderName), senderId: String(msg?.sender?.user_id ?? ''), text: String(text).slice(0, 120) };
+      return { messageId: String(messageId), sender: String(senderName), senderId: String(msg?.sender?.user_id ?? ''), text: String(text).slice(0, 120), media };
     } catch {
       return null;
     }
@@ -838,12 +840,24 @@ export function createApp({ log = console.log } = {}) {
       if (kind === 'group' && (cfgNow.blocklist?.[id] || []).map(String).includes(senderId)) return;
     }
     const media = segments ? extractMediaFromSegments(segments) : [];
+    let reply = null;
 
     let text;
     const atMarks = [];   // @ 段收集（qq + 渲染原文）：档位判定的权威依据（2026-09-26）
     if (segments) {
       text = await segmentsToText(segments, {
-        resolveReply: (mid) => resolveReply(mid),
+        resolveReply: async (mid) => {
+          const info = await resolveReply(mid);
+          // 引用正文已经渲染进 text；这里只保存定位信息，避免提示词重复引用。
+          reply = { messageId: String(mid), media: info?.media || [] };
+          // 引用的图片属于这条回复的上下文，走现有媒体下载与视觉链路。
+          for (const image of info?.media || []) {
+            if (!media.some(m => m.kind === 'image' && (image.url ? m.url === image.url : m.file === image.file))) {
+              media.push({ ...image, sourceMessageId: String(mid) });
+            }
+          }
+          return info;
+        },
         resolveAtName: (qq) => kind === 'group' ? resolveAtName(id, qq) : null,
         onAt: (m) => atMarks.push(m),
         // 语音转写（`media.transcribe`）要用它去 get_record 取音频
@@ -905,6 +919,7 @@ export function createApp({ log = console.log } = {}) {
       senderName,
       text: text || '[图片]' ,
       media,
+      reply,
       atMe,
       atNames
     });
