@@ -121,6 +121,9 @@ npm run test:coverage # 覆盖测试（模块层 + 全部 HTTP 接口 + 端到�
 npm run test:all      # 两套一起跑
 npm run test:wiring   # 只跑「界面接线」检查（需要可选依赖，见下）
 ```
+
+Linux 服务器部署与已知限制：[Node.js + systemd + 外部 OneBot](doc/linux-headless.md)。
+
 ### 界面接线检查（可选依赖）
 `test/coverage-wiring.mjs` 用 jsdom 加载真实的 `ui/index.html` 并执行 `ui/app.js`，
 然后按用户的真实操作路径（点页签 / 点设置分区 / 打开各弹窗）遍历，断言
