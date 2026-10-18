@@ -330,7 +330,9 @@ function formatEntry(m, { withId = true } = {}) {
     const idSuffix = senderId && String(senderId) !== 'self' ? `(QQ:${senderId})` : '';
     who = m.self ? '我' : `${getConfig().memberNotes?.[senderId] || m.senderName || senderId || '未知'}${idSuffix}`;
   }
-  return `[${formatShortTime(m.ts)}] ${idPrefix}${who}：${replyPrefix}${m.text}`;
+  // Clarify old self-action records only at render time; never rewrite saved history.
+  const text = m.self ? String(m.text ?? '').replace(/^\[拍一拍\] 你拍了拍/, '[拍一拍·机器人发出] 我拍了拍') : m.text;
+  return `[${formatShortTime(m.ts)}] ${idPrefix}${who}：${replyPrefix}${text}`;
 }
 
 /**
