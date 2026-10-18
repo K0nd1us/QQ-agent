@@ -307,6 +307,8 @@ function bindSettingsEvents(c) {
         else uiHide(el, () => { el.style.display = 'none'; });
       }
     }
+    const endpoint = $('#deepseek-search-endpoint');
+    if (endpoint) endpoint.style.display = v === 'deepseek' ? '' : 'none';
     const manage = $('#custom-provider-manage');
     if (manage) {
       if (v.startsWith('custom:')) uiShow(manage, () => { manage.style.display = ''; });

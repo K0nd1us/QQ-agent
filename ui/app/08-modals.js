@@ -1326,6 +1326,7 @@ async function saveConfig({ quiet = false } = {}) {
       searchUrl: val('#cfg-searchurl', c.webSearch?.searchUrl || 'https://cn.bing.com/search').trim() || 'https://cn.bing.com/search',
       deepseek: {
         ...(c.webSearch?.deepseek || {}),
+        baseUrl: val('#cfg-ds-searchurl', c.webSearch?.deepseek?.baseUrl || 'https://api.deepseek.com/responses').trim(),
         ...(enteredDsKey && enteredDsKey !== '******' ? { apiKey: enteredDsKey } : {}),
         model: val('#cfg-ds-searchmodel', c.webSearch?.deepseek?.model || 'deepseek-v4-flash').trim() || 'deepseek-v4-flash'
       },

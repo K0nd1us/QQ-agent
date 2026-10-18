@@ -123,18 +123,26 @@ export async function webSearch(query) {
   return bingSearch(clean);
 }
 
+function verifiedSourceUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.toString() : '';
+  } catch { return ''; }
+}
+
 /**
- * DeepSeek 服务端原生搜索（Responses API，web_search 工具）。
+ * 保留 DeepSeek Responses 配置槽位；官方当前忽略 web_search，不能冒充搜索。
  * 文档：https://api-docs.deepseek.com/zh-cn/guides/responses_api
- * 说明：搜索在 DeepSeek 服务端完成并注入上下文，客户端能拿到的是模型基于
- * 搜索结果生成的最终回答；URL/标题/摘要为黑盒，拿不到结构化来源。适合
- * “只要能搜到并总结”的场景；需要引用列表时请用 Bing / 其他搜索 API。
+ * 自建兼容接口须实际返回 web_search_call 及来源引用，才接受为搜索结果。
  */
 export async function deepSeekSearch(query) {
   const cfg = getConfig().webSearch?.deepseek ?? {};
   const apiKey = String(cfg.apiKey || process.env.DEEPSEEK_API_KEY || '').trim();
   if (!apiKey) throw new Error('DeepSeek 搜索需要 API Key（设置里填，或环境变量 DEEPSEEK_API_KEY）');
   const baseUrl = String(cfg.baseUrl || 'https://api.deepseek.com/responses').replace(/\/+$/, '');
+  if (new URL(baseUrl).hostname === 'api.deepseek.com') {
+    throw new Error('DeepSeek 官方 API 当前不支持内置 web_search；请在搜索服务中选择 Bing 或其他真实搜索提供方。模型与密钥配置可以保留。');
+  }
   const model = String(cfg.model || 'deepseek-v4-flash');
 
   const res = await fetch(baseUrl, {
@@ -156,15 +164,26 @@ export async function deepSeekSearch(query) {
     throw new Error(`DeepSeek 搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
   const data = await res.json().catch(() => { throw new Error('DeepSeek 搜索返回了无法解析的 JSON'); });
-  const outputText = String(data?.output_text ?? '').trim();
-  if (!outputText) {
-    // 兼容不同字段位置
-    const alt = data?.output?.find?.((item) => item?.type === 'message' && item?.content?.length)
-      ?.content?.map((c) => c?.text ?? '').join('') ?? '';
-    if (!alt) throw new Error('DeepSeek 搜索没有返回文本（可能是模型不支持 web_search 工具）');
-    return { query, results: [{ title: 'DeepSeek 搜索', url: '', snippet: alt }] };
+  const outputs = Array.isArray(data?.output) ? data.output : [];
+  if (data?.status !== 'completed' || !outputs.some(item => item?.type === 'web_search_call' && item.status === 'completed')) throw new Error('该接口没有执行联网搜索，不能将模型回答当作搜索结果');
+  const sources = new Set(outputs.filter(item => item?.type === 'web_search_call' && item.status === 'completed')
+    .flatMap(item => item.action?.sources || []).map(item => verifiedSourceUrl(item.url)).filter(Boolean));
+  const results = [];
+  const seen = new Set();
+  for (const message of outputs.filter(item => item?.type === 'message')) {
+    for (const part of message.content || []) {
+      for (const annotation of part.annotations || []) {
+        if (annotation.type !== 'url_citation' && !annotation.url_citation) continue;
+        const citation = annotation.url_citation || annotation;
+        const url = verifiedSourceUrl(citation.url || '');
+        if (!url || seen.has(url) || (sources.size && !sources.has(url))) continue;
+        seen.add(url);
+        results.push({ title: String(citation.title || url), url, snippet: String(part.text || '').slice(0, 700), verificationRequired: true });
+      }
+    }
   }
-  return { query, results: [{ title: 'DeepSeek 搜索', url: '', snippet: outputText }] };
+  if (!results.length) throw new Error('联网接口没有返回可核验的来源链接');
+  return { query, results: results.slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6)), fetchedAt: new Date().toISOString() };
 }
 
 /** 抓取网页正文（走 safe-fetch 的 SSRF 全防护）。
