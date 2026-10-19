@@ -881,6 +881,8 @@ function bindSettingsEvents(c) {
   if (pickGroupsBtn) pickGroupsBtn.addEventListener('click', () => openWhitelistPicker('groups'));
   const pickFriendsBtn = $('#pick-friends-btn');
   if (pickFriendsBtn) pickFriendsBtn.addEventListener('click', () => openWhitelistPicker('friends'));
+  const pickTempGroupsBtn = $('#pick-temp-groups-btn');
+  if (pickTempGroupsBtn) pickTempGroupsBtn.addEventListener('click', () => openWhitelistPicker('tempGroups'));
 
   // ── 按会话独立人设 ──
   // 唯一真相是隐藏 input 里的 JSON（与分群档位滑条同一套做法）：

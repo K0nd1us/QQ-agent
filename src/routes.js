@@ -1073,6 +1073,16 @@ export function createRoutes(deps) {
       method: 'POST', pattern: '/api/config',
       handler: async ({ req, res, json }) => {
         const patch = await readBody(req);
+        if (patch.tempSession !== undefined) {
+          const value = patch.tempSession;
+          if (!value || typeof value !== 'object' || Array.isArray(value)
+            || (value.enabled !== undefined && typeof value.enabled !== 'boolean')
+            || (value.groups !== undefined && (!Array.isArray(value.groups)
+              || value.groups.some((id) => !/^[1-9]\d*$/.test(String(id)) || !Number.isSafeInteger(Number(id)))))) {
+            return json(res, 400, { error: '临时会话设置无效：enabled 必须为布尔值，groups 必须是有效群号数组' });
+          }
+          if (value.groups) value.groups = [...new Set(value.groups.map((id) => String(Number(id))))];
+        }
         const next = updateConfig(patch);
         store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
         sessions?.setKeepFiles?.(next.store?.keepSessionFiles ?? 0);

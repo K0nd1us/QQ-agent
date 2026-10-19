@@ -27,6 +27,7 @@ import { extractCandidateUrls, dispatchMediaLinks } from './media-links.js';
 import { createRoutes } from './routes.js';
 import * as instanceLockModule from './instance-lock.js';
 import { logger } from './logger.js';
+import { privateMessageSource, tempSessionAllowed, findAllowedMemberGroup } from './temp-session.js';
 import { startCommunitySync, isGloballyBlocked, FIXED_PRICE_FEED_URL } from './community.js';
 
 // 全局 fetch（undici）默认连接建立超时只有 10 秒，openrouter.ai 这类海外端点
@@ -638,6 +639,19 @@ export function createApp({ log = console.log } = {}) {
     onEvent: (event) => handleOneBotEvent(event).catch((error) => log('[ingest] 处理事件出错:', error?.message ?? error))
   });
   const stickers = new StickerManager(onebot);
+  // 好友私聊不携带临时路由群号，但通过群成员身份接入时仍保留授权群。
+  onebot.resolvePrivateSource = (userId, sourceOverride, accessOverride) => {
+    const source = sourceOverride === undefined
+      ? store.sourceGroupId(`private:${userId}`)
+      : sourceOverride;
+    const accessGroup = accessOverride === undefined
+      ? (sourceOverride === undefined ? store.accessGroupId(`private:${userId}`) : source)
+      : accessOverride;
+    if (accessGroup != null && (!tempSessionAllowed(userId, accessGroup, getConfig()) || isGloballyBlocked(userId))) {
+      throw new Error('群成员私聊已停用，或授权群/用户已不被允许');
+    }
+    return source;
+  };
   const sender =   new SendQueue({
     onebot, store,
     onSent: ({ chatKey, text }) => log(`[发送 -> ${chatKey}] ${String(text).slice(0, 60)}`),
@@ -823,7 +837,10 @@ export function createApp({ log = console.log } = {}) {
 
   async function ingestMessage(kind, id, event) {
     const cfgNow = getConfig();
-    if (!allowed(kind, id, cfgNow)) return; // 白名单外的聊天完全不记录
+    const source = kind === 'private' ? privateMessageSource(event) : { temporary: false, groupId: null };
+    if (source.temporary) {
+      if (!tempSessionAllowed(id, source.groupId, cfgNow)) return;
+    } else if (kind !== 'private' && !allowed(kind, id, cfgNow)) return;
 
     const segments = Array.isArray(event.message) ? event.message : null;
     const senderId = String(event.sender?.user_id ?? event.user_id ?? '');
@@ -836,6 +853,19 @@ export function createApp({ log = console.log } = {}) {
       const globalBlocked = isGloballyBlocked(senderId);
       if (globalBlocked) return;
       if (kind === 'group' && (cfgNow.blocklist?.[id] || []).map(String).includes(senderId)) return;
+    }
+    let accessGroupId = null;
+    // 好友事件通常没有来源群号：不在独立 QQ 白名单时，逐个验证配置群的成员身份。
+    // 真实临时事件只能验证其明确来源，禁止从其它共同群兜底。
+    if (kind === 'private' && (source.temporary || !allowed(kind, id, cfgNow))) {
+      if (senderId !== id) return;
+      accessGroupId = await findAllowedMemberGroup(id, cfgNow, onebot, {
+        preferredGroupId: store.accessGroupId(`private:${id}`),
+        requiredGroupId: source.temporary ? source.groupId : undefined,
+        log: (message) => log(`[ingest] ${message}`)
+      });
+      // 查询期间设置可能改变，落库前再次检查。
+      if (!accessGroupId || !tempSessionAllowed(id, accessGroupId, getConfig()) || isGloballyBlocked(id)) return;
     }
     const media = segments ? extractMediaFromSegments(segments) : [];
 
@@ -906,7 +936,9 @@ export function createApp({ log = console.log } = {}) {
       text: text || '[图片]' ,
       media,
       atMe,
-      atNames
+      atNames,
+      sourceGroupId: source.groupId,
+      accessGroupId
     });
     emit('chat-update', `${kind}:${id}`);
     // 逐条触发判定：把刚入库的条目交给编排器（entry 让它能精确标这一条已读）
@@ -914,7 +946,9 @@ export function createApp({ log = console.log } = {}) {
 
     // 链接媒体转发（确定性）：刻意不 await —— 百兆级下载/上传不能卡住 ingest 热路径。
     // 内部已把错误全部收口（含 provider 抛错），这里再挂一次 catch 只为防漏网。
-    forwardLinkedMedia(kind, id, text).catch((e) => log(`[media] 链接转发失败：${e?.message ?? e}`));
+    const forward = () => forwardLinkedMedia(kind, id, text);
+    const forwarding = kind === 'private' ? onebot.withPrivateSource(id, source.groupId, forward, accessGroupId) : forward();
+    forwarding.catch((e) => log(`[media] 链接转发失败：${e?.message ?? e}`));
   }
 
   /**

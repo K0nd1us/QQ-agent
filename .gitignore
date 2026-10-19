@@ -45,7 +45,14 @@ release/
 
 # 本地环境变量（若以后用到）
 .env
-.env.local
+.env.*
+!.env.example
+!.env.sample
+# 私钥及包含私钥的证书包（示例文件使用 .example 后缀）
+*.key
+*.pem
+*.p12
+*.pfx
 community.key
 
 .goal-baseline/

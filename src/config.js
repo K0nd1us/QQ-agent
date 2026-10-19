@@ -201,6 +201,8 @@ export const DEFAULT_CONFIG = {
   allow: { groups: [], private: [] },
   deny: { groups: [], private: [] },
   allowAllWhenEmpty: false,
+  // 群成员私聊（含无需添加好友的临时会话）：仅显式列出的群可授权。
+  tempSession: { enabled: false, groups: [] },
   // 运行节奏
   wakeDelayMs: 2000,        // 空闲时收到消息到发起运行的防抖窗口（等连发聚成一批）
   drainDelayMs: 1200,       // 一次运行结束后发现还有未读，到下一次运行的间隔

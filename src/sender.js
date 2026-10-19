@@ -165,6 +165,8 @@ export class SendQueue {
           console.warn(`[sender] 跳过重复消息（${this.#dedupeWindow()}ms 内已发过相同内容）：${String(text).slice(0, 30)}`);
           return { text, messageId: null, at: formatClockTime(Date.now()), deduped: true };
         }
+        // 跨会话发送等调用方可在真正出站前重查权限，避免排队期间的撤销失效。
+        await options.beforeSend?.();
         const data = await this.onebot.sendText(kind, id, text, {
           replyToMessageId: i === 0 ? options.replyToMessageId : null, // 引用挂在第一条上：回的就是那条
           atUserId: i === 0 ? options.atUserId : null

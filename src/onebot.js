@@ -1,6 +1,7 @@
 // OneBot v11 客户端：WebSocket 只收事件，HTTP API 负责发送与查询。
 // （原版经 @snowluma/sdk 收事件；这里直接实现标准 OneBot v11，去掉 SDK 补丁依赖。）
 import WebSocket from 'ws';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { sanitizeUserText, escapeCqText } from './util.js';
 import { skillManager } from './skills/manager.js';
 
@@ -82,6 +83,13 @@ function describeCause(error, depth = 0) {
 }
 
 export class OneBotClient {
+  #privateSource = new AsyncLocalStorage();
+
+  // 每轮回复绑定其触发消息的来源，避免处理期间新消息改变出站群号。
+  withPrivateSource(userId, groupId, fn, accessGroupId = groupId) {
+    return this.#privateSource.run({ userId: String(userId), groupId, accessGroupId }, fn);
+  }
+
   constructor({ wsUrl, httpUrl, accessToken, httpToken, onEvent }) {
     this.wsUrl = String(wsUrl || 'ws://127.0.0.1:3001');
     this.httpUrl = String(httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
@@ -321,6 +329,13 @@ export class OneBotClient {
     const params = kind === 'private'
       ? { user_id: Number(id), message: segments }
       : { group_id: Number(id), message: segments };
+    if (kind === 'private') {
+      const context = this.#privateSource.getStore();
+      const sourceOverride = context?.userId === String(id) ? context.groupId : undefined;
+      const accessOverride = context?.userId === String(id) ? context.accessGroupId : undefined;
+      const groupId = this.resolvePrivateSource?.(String(id), sourceOverride, accessOverride);
+      if (groupId != null) params.group_id = Number(groupId);
+    }
     return this.call(action, params);
   }
 
@@ -381,6 +396,10 @@ export class OneBotClient {
 
   async sendPoke(kind, id, targetUserId) {
     if (kind === 'private') {
+      const context = this.#privateSource.getStore();
+      const source = this.resolvePrivateSource?.(String(id), context?.userId === String(id) ? context.groupId : undefined,
+        context?.userId === String(id) ? context.accessGroupId : undefined);
+      if (source != null) throw new Error('群临时会话暂不支持拍一拍，请发送文字或图片');
       return this.call('friend_poke', { user_id: Number(id) }).catch(() =>
         this.call('send_poke', { user_id: Number(id) }));
     }
