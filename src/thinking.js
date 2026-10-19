@@ -37,6 +37,8 @@ const MODEL_RULES = [
   { dialect: 'qwen', host: null, model: /^(qwen|qwq)/i, supports: ['off', 'on', 'budget'] },
   { dialect: 'glm', host: /bigmodel\.cn$/i, model: /glm/i, supports: ['off', 'on'] },
   { dialect: 'glm', host: null, model: /glm-(z|4|5)/i, supports: ['off', 'on'] },
+  { dialect: 'mimo', host: /(^|\.)xiaomimimo\.com$/i, model: null, supports: ['off', 'on'] },
+  { dialect: 'mimo', host: null, model: /(^|\/)mimo(-|$)/i, supports: ['off', 'on'] },
   { dialect: 'openai-o', host: /openai\.com$/i, model: /^(o[1-9]|gpt-5)/i, supports: ['effort'] },
   { dialect: 'openai-o', host: null, model: /^(o[1-9](-|$)|gpt-5)/i, supports: ['effort'] },
   { dialect: 'anthropic', host: /(anthropic|claude)\./i, model: /claude/i, supports: ['off', 'on', 'budget'] },
@@ -54,6 +56,7 @@ export const DIALECT_LABELS = {
   deepseek: 'DeepSeek 思考',
   qwen: '通义千问思考',
   glm: '智谱 GLM 思考',
+  mimo: 'MiMo 思考',
   'openai-o': 'OpenAI 推理强度',
   anthropic: 'Claude 思考预算',
   gemini: 'Gemini 思考',
@@ -184,6 +187,7 @@ export function buildThinkingParams({ effort = '', dialect = 'generic', budget =
 
   switch (dialect) {
     case 'deepseek':
+    case 'mimo':
     case 'glm': {
       if (on) { params.thinking = { type: 'enabled' }; applied = true; omitTemperature = true; }
       else if (e === 'off') { params.thinking = { type: 'disabled' }; applied = true; }
