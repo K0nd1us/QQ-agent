@@ -172,6 +172,31 @@ if (!JSDOM) {
     }
   });
 
+  await c2.check('临时会话独立选择来源群、保存开关和名单，保留原有黑名单', async () => {
+    await request('POST', '/api/config', { body: { deny: { groups: ['999'], private: ['555'] } } });
+    doc.querySelector('#cfg-temp-session-enabled').click();
+    await waitFor(async () => (await request('GET', '/api/config')).data.tempSession.enabled, 5000, '启用后自动保存');
+    doc.querySelector('#pick-temp-groups-btn').click();
+    await waitFor(() => doc.querySelector('.modal-overlay .pick-item'), 5000, '临时来源群选择弹窗');
+    const boxes = [...doc.querySelectorAll('.modal-overlay input[type=checkbox]')];
+    for (const box of boxes) box.checked = box.value === '789';
+    doc.querySelector('#pick-apply').click();
+    await waitFor(() => !doc.querySelector('.modal-overlay'), 3000, '弹窗关闭');
+    assert.equal(doc.querySelector('#cfg-temp-session-groups').value, '789');
+    assert.equal(doc.querySelector('#cfg-allowgroups').value, '456', '群聊白名单保持独立');
+    await waitFor(async () => (await request('GET', '/api/config')).data.tempSession.groups.includes('789'), 5000, '选择后自动保存');
+    let saved = (await request('GET', '/api/config')).data;
+    assert.deepEqual(saved.tempSession, { enabled: true, groups: ['789'] });
+    assert.deepEqual(saved.deny, { groups: ['999'], private: ['555'] });
+    doc.querySelector('#cfg-temp-session-enabled').click();
+    await waitFor(async () => !(await request('GET', '/api/config')).data.tempSession.enabled, 5000, '停用后自动保存');
+    saved = (await request('GET', '/api/config')).data;
+    assert.deepEqual(saved.tempSession, { enabled: false, groups: ['789'] }, '停用保留名单');
+    await window.loadSettings();
+    assert.equal(doc.querySelector('#cfg-temp-session-groups').value, '789', '重载可恢复编辑');
+    assert.equal(doc.querySelector('#cfg-temp-session-enabled').checked, false);
+  });
+
   dom.window.close();
 }
 

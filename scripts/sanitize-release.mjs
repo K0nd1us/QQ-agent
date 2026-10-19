@@ -165,6 +165,11 @@ function resetConfig() {
     cfg.allow.groups = [];
     cfg.allow.private = [];
   }
+  if (cfg.tempSession) {
+    cfg.tempSession.enabled = false;
+    cfg.tempSession.groups = [];
+    cleared.push('tempSession');
+  }
   if (cfg.deny) { cfg.deny.groups = []; cfg.deny.private = []; }
   if ('allowAllWhenEmpty' in cfg) cfg.allowAllWhenEmpty = false;
   if ('memberNotes' in cfg && Object.keys(cfg.memberNotes || {}).length) {

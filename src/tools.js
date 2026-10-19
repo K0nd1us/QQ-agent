@@ -13,7 +13,9 @@ import { skillManager } from './skills/manager.js';
 import { validateImageUrl, safeFetchBinary, browseLockState, checkBrowseLock } from './safe-fetch.js';
 import { webSearch, webFetch } from './web-search.js';
 import { expandForwardNodes } from './onebot.js';
-import { registerTool, listTools } from './tool-registry.js';
+import { registerTool, listTools, getToolAvailability } from './tool-registry.js';
+import { findAllowedMemberGroup, tempSessionAllowed } from './temp-session.js';
+import { isGloballyBlocked } from './community.js';
 import { holidayOn, upcomingHoliday } from './holidays.js';
 import { compressImage } from './image-compress.js';
 import { localStickerPath } from './sticker-manager.js';
@@ -199,7 +201,7 @@ function registerAllTools() {
       const cross = getConfig().tools?.crossChatSend === true;
       const base = '把消息发送到另一个群/私聊（不在当前会话里说，而是去别处说）。适用于：有人明确让你转告某人/某群、你主动去私聊某人。';
       return cross
-        ? `${base}先用 get_chats 查可用的 chatKey，再传 targetChatKey（形如 group:123 / private:456）。只在有明确理由时使用，不要骚扰别人。`
+        ? `${base}目标可为会话白名单，或「群成员私聊与临时会话」白名单群的成员，无需单独添加 QQ 白名单或已有私聊记录。先用 get_chats 查已有会话；群友也可使用群消息中确认的 QQ 号，传 private:QQ号。发送前会校验成员与好友身份，非好友使用群临时路由，能否建立仍取决于 QQ/协议端。只在有明确理由时使用，不要骚扰别人。`
         : `${base}（当前未开启：管理员可在 设置 → 工具与技能 打开「允许跨会话发送」。）`;
     })(),
     category: 'messaging',
@@ -210,44 +212,78 @@ function registerAllTools() {
     parameters: {
       type: 'object',
       properties: {
-        targetChatKey: { type: 'string', description: '目标会话：group:群号 / private:QQ号（用 get_chats 查，不要自己编）' },
+        targetChatKey: { type: 'string', description: '目标：group:群号 / private:QQ号；用 get_chats 查已有会话，或使用已确认的白名单群友 QQ 号' },
         messages: { description: '要发送的内容：字符串=一条；数组=分多条', oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }
       },
       required: ['targetChatKey', 'messages']
     },
     async execute(ctx, args) {
+      let tempSource = null;
       try {
-        // 硬校验三连：开关 → 格式 → 白名单。描述里的引导不是安全边界。
-        if (getConfig().tools?.crossChatSend !== true) {
-          return err('跨会话发送未开启（管理员可在 设置 → 工具与技能 里打开）。');
-        }
+        const checkTool = () => {
+          const availability = getToolAvailability('send_to', { toolsCfg: getConfig().tools || {} });
+          if (!availability.enabled) throw new Error(availability.reason);
+        };
+        checkTool();
         const wantTarget = String(args.targetChatKey ?? '').trim();
-        if (!/^(group|private):\d+$/.test(wantTarget)) {
+        if (!/^(group|private):[1-9]\d*$/.test(wantTarget) || !Number.isSafeInteger(Number(wantTarget.split(':')[1]))) {
           return err('targetChatKey 格式应为 group:群号 或 private:QQ号');
         }
         if (wantTarget === ctx.chatKey) {
           return err(`目标 ${wantTarget} 就是当前会话，直接用 send_message 即可。`);
         }
         const [tKind, tId] = wantTarget.split(':');
-        const allow = getConfig().allow || {};
-        const allowList = (tKind === 'group' ? allow.groups : allow.private) || [];
-        // 白名单空名单口径必须与消息入口 app.allowed() 一致（群/私聊统一：
-        // 空名单 + allowAllWhenEmpty 才放行）。曾经私聊在这里无条件放行，
-        // 入口拒收私聊、send_to 却能替模型把消息发给任意私聊 QQ —— 同一
-        // 白名单概念两处判定相反。
-        const allowedAll = allowList.length === 0 && getConfig().allowAllWhenEmpty === true;
-        if (!(allowList.map(String).includes(tId) || allowedAll)) {
-          return err(`目标 ${wantTarget} 不在白名单内，不能发送。`);
-        }
         const messages = normalizeMessageList(args.messages);
         if (!messages.length) return err('消息内容为空');
-        const result = await ctx.sender.sendTextBatch(wantTarget, messages, {});
+        const checkDenied = (cfg) => {
+          const denied = cfg.deny?.[tKind] ?? cfg.deny?.[`${tKind}s`] ?? [];
+          if (denied.map(String).includes(tId) || (tKind === 'private' && isGloballyBlocked(tId))) {
+            throw new Error(`目标 ${wantTarget} 在黑名单或全局屏蔽名单内，不能发送。`);
+          }
+        };
+        const listed = (cfg) => {
+          const allowList = cfg.allow?.[tKind] ?? cfg.allow?.[`${tKind}s`] ?? [];
+          return allowList.map(String).includes(tId) || (allowList.length === 0 && cfg.allowAllWhenEmpty === true);
+        };
+        const cfg = getConfig();
+        checkDenied(cfg);
+        let accessGroupId = null;
+        if (!listed(cfg)) {
+          if (tKind === 'private') {
+            accessGroupId = await findAllowedMemberGroup(tId, cfg, ctx.onebot, {
+              preferredGroupId: ctx.store.accessGroupId?.(wantTarget)
+            });
+          }
+          if (!accessGroupId) return err(`目标 ${wantTarget} 不在会话白名单内，或无法确认其为允许群的成员，不能发送。`);
+          const friends = await ctx.onebot.call('get_friend_list');
+          if (!Array.isArray(friends)) return err('无法确认目标的好友关系，请检查协议端后重试。');
+          tempSource = friends.some((friend) => String(friend.user_id) === tId) ? null : accessGroupId;
+        }
+        // 成员/好友查询期间设置可能改变，发送前重新校验；群授权不写入 QQ 白名单。
+        const checkAuthorization = () => {
+          checkTool();
+          const current = getConfig();
+          checkDenied(current);
+          if (accessGroupId ? !tempSessionAllowed(tId, accessGroupId, current) : !listed(current)) {
+            throw new Error(`目标 ${wantTarget} 的发送授权已停用或移除。`);
+          }
+        };
+        const send = () => {
+          checkAuthorization();
+          return ctx.sender.sendTextBatch(wantTarget, messages, { beforeSend: checkAuthorization });
+        };
+        const result = await (accessGroupId
+          ? ctx.onebot.withPrivateSource(tId, tempSource, send, accessGroupId)
+          : send());
         ctx.session.sent.push(...result.sent.map((s) => ({ type: 'text', text: s.text, to: wantTarget })));
         ctx.emit('session-update', ctx.session.id);
         const note = [`已发送到 ${wantTarget}。不要输出汇报。`];
         if (result.failed.length) note.push(`（另有 ${result.failed.length} 条发送失败：${result.failed.map((f) => f.error).join('；')}）`);
         return ok({ sent: result.sent.length, messageIds: result.sent.map((s) => s.messageId), note: note.join('') });
       } catch (error) {
+        if (tempSource != null && /no such temp session/i.test(String(error?.message ?? error))) {
+          return err(`QQ/协议端尚未允许与该群友建立临时会话，可让对方先从群内发起临时会话后重试。${error?.message ?? error}`);
+        }
         return err(error?.message ?? error);
       }
     }
@@ -556,7 +592,7 @@ function registerAllTools() {
   registerTool({
     id: 'get_chats',
     name: '查看可用会话',
-    description: '列出机器人参与的会话（chatKey、名字、最近消息时间）。跨会话发送（send_message 的 targetChatKey）前用它查目标。',
+    description: '列出机器人已有的会话（chatKey、最近消息时间）。send_to 前可用它查目标；允许群的成员即使尚无私聊记录，也可用群消息中确认的 QQ 号作为 private:QQ号 目标。',
     category: 'query',
     icon: '📋',
     parameters: {

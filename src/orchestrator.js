@@ -587,7 +587,11 @@ export class Orchestrator {
     try {
       for (let attempt = 1; attempt <= MAX_SESSION_ATTEMPTS; attempt++) {
         try {
-          await this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit: effectiveTier.count, tierInfo: effectiveTier, activeTopic: activeState ? activeState.topic : null });
+          const run = () => this.#runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, contextLimit: effectiveTier.count, tierInfo: effectiveTier, activeTopic: activeState ? activeState.topic : null });
+          await (kind === 'private' && this.onebot.withPrivateSource
+            ? this.onebot.withPrivateSource(chatId, triggerEntries.length ? triggerEntries.at(-1).sourceGroupId ?? null : undefined, run,
+              triggerEntries.length ? triggerEntries.at(-1).accessGroupId ?? triggerEntries.at(-1).sourceGroupId ?? null : undefined)
+            : run());
           lastError = null;
           break;
         } catch (error) {

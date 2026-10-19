@@ -686,7 +686,7 @@ function openPerChatPersonaModal(chatKey) {
 function renderAllowSection(c) {
   return `
     <h3 id="settings-allow">聊天白名单</h3>
-    <div class="hint" style="margin-bottom:10px">白名单为空时机器人不会在任何群聊/私聊内运行。</div>
+    <div class="hint" style="margin-bottom:10px">群聊按群号授权；私聊可按 QQ 号或下方的群成员身份授权，黑名单始终优先生效。</div>
     <div class="field"><label>从 QQ 账号直接勾选</label>
       <div class="allow-pick-row">
         <button class="btn btn-small" id="pick-groups-btn">选择群</button>
@@ -700,6 +700,16 @@ function renderAllowSection(c) {
     <div class="checkbox-row"><input type="checkbox" id="cfg-allowallwhenempty" ${c.allowAllWhenEmpty === true ? 'checked' : ''} />
       <label for="cfg-allowallwhenempty">白名单留空时允许所有会话</label></div>
     <div class="hint">说明：勾选后，若上方两个列表都为空，机器人会在<b>所有</b>群聊和私聊中运行；只要填了任意一项，就只按名单过滤。</div>
+    <h4 style="margin:18px 0 8px">群成员私聊与临时会话</h4>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-temp-session-enabled" ${c.tempSession?.enabled === true ? 'checked' : ''} />
+      <label for="cfg-temp-session-enabled">允许白名单群成员私聊机器人（含好友与临时会话）</label></div>
+    <div class="field"><label for="cfg-temp-session-groups">临时对话或私聊来源群白名单（逗号分隔）</label>
+      <input type="text" id="cfg-temp-session-groups" value="${esc((c.tempSession?.groups || []).join(','))}" placeholder="填写允许的来源群号" aria-describedby="temp-session-hint" /></div>
+    <div class="allow-pick-row">
+      <button class="btn btn-small" id="pick-temp-groups-btn">选择来源群</button>
+      <span id="pick-temp-result" class="muted allow-pick-msg" role="status"></span>
+    </div>
+    <div class="hint" id="temp-session-hint">这些群的成员无论是否好友，都可私聊机器人，无需另填 QQ 白名单。开启「工具与技能 → 消息发送 → send_to」后，也可作为机器人主动私聊的目标；发送前校验群成员身份，黑名单优先。好友使用普通私聊；非好友使用群临时会话，当前内置 SnowLuma 需对方先发起有效临时会话。停用或清空本名单后，群成员授权失效，原有 QQ 白名单仍有效。修改后自动保存。</div>
     <div class="hint" style="margin-top:8px">按会话的独立人设在「人设」页签配置（关闭"统一人设"后出现）。</div>`;
 }
 
@@ -1607,7 +1617,7 @@ function renderToolsSection(c) {
             ${t.requiresVision ? '<span class="tool-dep">需要视觉模型</span>' : ''}
             ${t.requiresSearch ? '<span class="tool-dep">需要搜索服务</span>' : ''}
             ${disabledByDep ? '<span class="tool-dep-warn">依赖未满足</span>' : ''}
-            ${isSendTo ? '<span class="tool-dep">目标须在白名单内</span>' : ''}
+            ${isSendTo ? '<span class="tool-dep">目标须在会话白名单内或为允许群的成员</span>' : ''}
           </div>
         </div>`;
     }).join('') : '';

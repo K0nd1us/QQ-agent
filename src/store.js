@@ -80,7 +80,7 @@ export class ChatStore {
   }
 
   /** 追加一条收到的消息（未读）。返回写入的条目。 */
-  appendIncoming(chatKey, { mid, ts, senderId, senderName, text, reply = null, media = [], isPoke = false, atMe = null, atNames = [] }) {
+  appendIncoming(chatKey, { mid, ts, senderId, senderName, text, reply = null, media = [], isPoke = false, atMe = null, atNames = [], sourceGroupId = null, accessGroupId = sourceGroupId }) {
     const st = this.#state(chatKey);
     const entry = {
       id: st.nextLocalId++,
@@ -89,6 +89,8 @@ export class ChatStore {
       senderId: String(senderId ?? ''),
       senderName: String(senderName ?? ''),
       text: String(text ?? ''),
+      sourceGroupId: sourceGroupId == null ? null : String(sourceGroupId),
+      accessGroupId: accessGroupId == null ? null : String(accessGroupId),
       self: false,
       read: false,
       reply: reply || null,
@@ -104,9 +106,27 @@ export class ChatStore {
       atNames: (Array.isArray(atNames) ? atNames : []).map((n) => String(n ?? '')).filter(Boolean).slice(0, 20)
     };
     st.messages.push(entry);
+    st.sourceGroupId = entry.sourceGroupId;
+    st.accessGroupId = entry.accessGroupId;
     this.#trim(st);
     saveChat(st);
     return entry;
+  }
+
+  /** 最近的入站消息（不受机器人自己的回复影响）。 */
+  lastIncoming(chatKey) {
+    const st = this.chats.get(chatKey) ?? loadChat(chatKey);
+    return st.messages.findLast((entry) => !entry.self) ?? null;
+  }
+
+  sourceGroupId(chatKey) {
+    const st = this.chats.get(chatKey) ?? loadChat(chatKey);
+    return Object.hasOwn(st, 'sourceGroupId') ? st.sourceGroupId : this.lastIncoming(chatKey)?.sourceGroupId ?? null;
+  }
+
+  accessGroupId(chatKey) {
+    const st = this.chats.get(chatKey) ?? loadChat(chatKey);
+    return Object.hasOwn(st, 'accessGroupId') ? st.accessGroupId : this.sourceGroupId(chatKey);
   }
 
   /** 记录机器人自己发出的消息（已读）。 */

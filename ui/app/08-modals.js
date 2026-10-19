@@ -1149,18 +1149,24 @@ function openProviderAddModal(onDone) {
 
 // ── 白名单可视化选择器 ──
 async function openWhitelistPicker(kind) {
-  const isGroups = kind === 'groups';
-  $('#pick-result').textContent = '拉取中…';
+  const isTempGroups = kind === 'tempGroups';
+  const isGroups = kind === 'groups' || isTempGroups;
+  const resultEl = $(isTempGroups ? '#pick-temp-result' : '#pick-result');
+  const button = $(isTempGroups ? '#pick-temp-groups-btn' : isGroups ? '#pick-groups-btn' : '#pick-friends-btn');
+  if (button) button.disabled = true;
+  resultEl.textContent = '拉取中…';
   let list;
   try {
-    const data = await api(`/api/onebot/${kind}`);
+    const data = await api(`/api/onebot/${isGroups ? 'groups' : 'friends'}`);
     list = isGroups ? data.groups : data.friends;
   } catch (e) {
-    $('#pick-result').textContent = `拉取失败：${e.message}（OneBot 未连接？）`;
+    resultEl.textContent = `拉取失败：${e.message}（检查 OneBot 连接后重试）`;
     return;
+  } finally {
+    if (button) button.disabled = false;
   }
   if (!list?.length) {
-    $('#pick-result').textContent = isGroups ? '没拉到群列表（检查 SnowLuma）' : '没拉到好友列表';
+    resultEl.textContent = isGroups ? '没拉到群列表（检查 SnowLuma）' : '没拉到好友列表';
     return;
   }
   // 群名进补底缓存：分群按钮等处只显示群名，靠这份名字辨识
@@ -1172,7 +1178,7 @@ async function openWhitelistPicker(kind) {
       if (id && name) state.qqGroupNames[id] = name;
     }
   }
-  const inputEl = $(isGroups ? '#cfg-allowgroups' : '#cfg-allowprivate');
+  const inputEl = $(isTempGroups ? '#cfg-temp-session-groups' : isGroups ? '#cfg-allowgroups' : '#cfg-allowprivate');
   const selected = new Set(parseList(inputEl.value));
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -1209,7 +1215,10 @@ async function openWhitelistPicker(kind) {
   $('#pick-apply', overlay).addEventListener('click', () => {
     const picked = $$('input[type=checkbox]:checked', overlay).map((el) => el.value);
     inputEl.value = picked.join(',');
-    $('#pick-result').textContent = `已选 ${picked.length} 个${isGroups ? '群' : '好友'}，记得点"保存设置"`;
+    resultEl.textContent = isTempGroups
+      ? `已选 ${picked.length} 个来源群，更改会自动保存`
+      : `已选 ${picked.length} 个${isGroups ? '群' : '好友'}，记得点"保存设置"`;
+    if (isTempGroups) inputEl.dispatchEvent(new Event('change', { bubbles: true }));
     close();
   });
 }
@@ -1380,6 +1389,18 @@ async function saveConfig({ quiet = false } = {}) {
   }
 
   if (sec === 'allow') {
+    const tempGroups = [...new Set(parseList(val('#cfg-temp-session-groups', (c.tempSession?.groups || []).join(','))))];
+    if (tempGroups.some((id) => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id)))) {
+      const input = $('#cfg-temp-session-groups');
+      input?.setCustomValidity('群号必须是有效的正整数，多个群号请用逗号分隔');
+      input?.reportValidity();
+      throw new Error('临时会话来源群号必须是有效的正整数，多个群号请用逗号分隔');
+    }
+    $('#cfg-temp-session-groups')?.setCustomValidity('');
+    patch.tempSession = {
+      enabled: chk('#cfg-temp-session-enabled', c.tempSession?.enabled === true),
+      groups: tempGroups.map((id) => String(Number(id)))
+    };
     patch.allow = {
       groups: parseList(val('#cfg-allowgroups', (c.allow?.groups || []).join(','))),
       private: parseList(val('#cfg-allowprivate', (c.allow?.private || []).join(',')))
