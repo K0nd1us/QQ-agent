@@ -48,6 +48,23 @@
 - `online`: 是否在线
 - `good`: 收发链路健康状态
 
+### set_online_status
+
+设置在线状态（**SnowLuma 扩展**，不在 OneBot v11 标准里）。
+
+**参数**：
+- `status`: 整数，QQ 协议的状态码（非 0）：`10` 在线 / `30` 离开 / `40` 隐身 / `50` 忙碌 / `60` Q我吧 / `70` 请勿打扰
+- `ext_status`: 整数，默认 0
+- `battery_status`: 整数，默认 100
+
+**返回**：`{}`
+
+> 实测（2026-10）：`status` **必须是整数** —— 传 `"dnd"` 这类字符串会被拒（`status: expected an integer`）；
+> 无效值会回 `retcode=100 invalid request status`。
+> 另外**没有** `get_online_status`（`1404 unknown action`），当前状态读不回来；
+> 所以想做"关闭前设请勿打扰、下次启动恢复在线"这类状态守卫，只能**自己记账**（比如把"是我设的"写进本地文件，
+> 下次启动读到再改回来）—— 否则无法区分"我设的 DND"和"用户手动设的 DND"。
+
 ### get_version_info
 获取实现与协议版本信息。
 
