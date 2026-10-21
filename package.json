@@ -20,7 +20,6 @@
       "!snowluma/data/**",
       "!snowluma/logs/**",
       "!test/**",
-      "!doc/**",
       "!scripts/**",
       "!dist/**",
       "!**/*.map",
@@ -41,7 +40,13 @@
       "deleteAppDataOnUninstall": false,
       "shortcutName": "QQ Agent",
       "include": "build/installer.nsh"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "doc",
+        "to": "doc"
+      }
+    ]
   },
   "engines": {
     "node": ">=20.0.0"
