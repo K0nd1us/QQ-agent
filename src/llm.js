@@ -1,6 +1,7 @@
 // OpenAI 兼容 Chat Completions 客户端（非流式）。
 // 支持工具调用、usage 统计、可自选模型 —— 这是与 DSH 解耦后的"大脑"接口。
 import { getConfig } from './config.js';
+import { stringifyWellFormedJson } from './unicode.js';
 import { resolveModelPrice, priceAt } from './model-prices.js';
 import { skillManager } from './skills/manager.js';
 import {
@@ -373,7 +374,7 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     const res = await fetch(joinUrl(api.baseUrl, '/chat/completions'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders(api.apiKey, api.baseUrl, api.model) },
-      body: JSON.stringify(body),
+      body: stringifyWellFormedJson(body),
       signal: controller.signal
     });
     const text = await res.text().catch(() => '');
