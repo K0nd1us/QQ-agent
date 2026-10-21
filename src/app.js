@@ -22,6 +22,7 @@ import { isPeakHour, priceAt, resolveModelPrice, modelLabel, splitModelLabel, UN
 import { initPriceFeed } from './price-feed.js';
 import { startTelemetryLoop } from './telemetry.js';
 import { loadPlugins, watchPlugins } from './plugin-loader.js';
+import { setPresenceClient } from './presence.js';
 import { skillManager } from './skills/manager.js';
 import { extractCandidateUrls, dispatchMediaLinks } from './media-links.js';
 import { createRoutes } from './routes.js';
@@ -772,6 +773,9 @@ export function createApp({ log = console.log } = {}) {
     applyTokens(c);
     onebot.reconnect();
   }
+  // 在线状态模块需要一个 OneBot 客户端引用（它不反向依赖 app）
+  setPresenceClient(onebot);
+
   onebot.onStatus((status) => {
     if (status.connected) {
       // 连上了：把当前生效的候选钉住 —— 写进游标，并把该令牌挪到候选列表首位，
@@ -1634,6 +1638,18 @@ export function createApp({ log = console.log } = {}) {
   }
 
   async function stop() {
+    // 退出前给插件一次机会（before-shutdown 钩子）：目前用于把 QQ 状态设成"请勿打扰"。
+    // 必须在 onebot.close() 之前跑，且限时 —— 退出不能被插件拖住。
+    // 注意：被计划任务 taskkill /F 杀掉时没有任何 JS 钩子会跑，那条路由脚本直接调
+    //       POST /api/presence 兜住（见 停止脚本）。
+    try {
+      await Promise.race([
+        skillManager.runHook('before-shutdown', { reason: 'app-stop' }),
+        new Promise((resolve) => setTimeout(resolve, 3000))
+      ]);
+    } catch (error) {
+      log('[presence] before-shutdown 钩子执行失败：' + (error?.message ?? error));
+    }
     // 先停掉热重载 watcher：否则 stop() 之后文件变动仍会触发重载 + 广播
     try { pluginWatcher?.close?.(); } catch { /* ignore */ }
     pluginWatcher = null;

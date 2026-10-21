@@ -28,6 +28,7 @@ import path from 'node:path';
 import { format } from 'node:util';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { registerTool, unregisterTool, unregisterToolsBySkill, getTool, listTools } from './tool-registry.js';
+import { setPresence, getPresence, restoreIfDnd } from './presence.js';
 import { skillManager } from './skills/manager.js';
 import { normalizeManifest, isManifestUsable, SKILL_API_VERSION, kindOfDir } from './skills/manifest.js';
 import { skillErrorText } from './skills/errors.js';
@@ -113,7 +114,19 @@ function createSkillApi(skillId, permissions = []) {
       return undefined;
     },
     hasCapability: (name) => skillManager.hasCapability(name),
-    // 日志。
+    /**
+   * QQ 在线状态控制（需在清单里声明 permissions: ["presence_control"]）。
+   * 之所以由核心提供而不是让插件自己发 HTTP：钩子契约禁止网络请求，
+   * 而这里只是一次本地协议调用（onebot.call → 127.0.0.1），由核心统一收口。
+   */
+  setPresence: has('presence_control')
+    ? (status, options = {}) => setPresence(status, options)
+    : () => Promise.reject(new Error(`Skill ${skillId} 未声明 presence_control 权限`)),
+  getPresence: has('presence_control') ? () => getPresence() : () => null,
+  restorePresenceIfDnd: has('presence_control')
+    ? (options = {}) => restoreIfDnd(options)
+    : () => Promise.reject(new Error(`Skill ${skillId} 未声明 presence_control 权限`)),
+  // 日志。
     // ⚠️ 必须先 util.format(...args) 再加前缀：format 只把**第一个参数**当格式串，
     //    如果写成 console.log(前缀, ...args)，前缀占掉第一位，插件写的
     //    log('已加载（%s~%s）', a, b) 里的 %s 就永远不会被替换（打印字面 %s）。

@@ -25,6 +25,7 @@ import {
 import { scanModelsVision, visionResults, modelImageVerdict } from './vision-scan.js';
 import { builtinVisionResults } from './model-vision-docs.js';
 import { todayKey } from './util.js';
+import { setPresence, presenceSummary, restoreIfDnd } from './presence.js';
 import { logger } from './logger.js';
 import { skillManager } from './skills/manager.js';
 import { getSkillConfig, setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
@@ -1425,6 +1426,29 @@ export function createRoutes(deps) {
     {
       method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/mark-read$/,
       handler: async ({ res, json, match }) => json(res, 200, { ok: true, marked: store.drainUnread(`${match[1]}:${match[2]}`).length })
+    },
+    {
+      // QQ 在线状态：给定时脚本（关闭前设"请勿打扰"）和插件用。
+      // GET = 当前记账 + 配置；POST = { status: 'dnd' | 'online' | <协议整数> }，restore:true 按记账恢复。
+      method: 'GET', pattern: '/api/presence',
+      handler: async ({ res, json }) => json(res, 200, { ok: true, ...presenceSummary() })
+    },
+    {
+      method: 'POST', pattern: '/api/presence',
+      handler: async ({ req, res, json }) => {
+        const body = await bodyOf(req);
+        if (body?.restore === true) {
+          const r = await restoreIfDnd({ source: 'api' });
+          return json(res, 200, { ok: true, restore: r });
+        }
+        try {
+          const r = await setPresence(body?.status ?? body?.presence ?? '', { source: 'api' });
+          if (!r.ok) return json(res, 400, { ok: false, error: r.error });
+          return json(res, 200, { ok: true, status: r.status, ...presenceSummary() });
+        } catch (error) {
+          return json(res, 502, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
     },
     {
       // 清空某会话的全部消息（整体清除存档）

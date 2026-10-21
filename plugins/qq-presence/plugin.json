@@ -1,0 +1,46 @@
+{
+  "id": "qq-presence",
+  "name": "在线状态守卫（关机前请勿打扰）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "被计划任务或策略关掉之前，把 QQ 状态设成「请勿打扰」；下次机器人上线时，如果记账里显示上次是我们设的「请勿打扰」，就自动改回「在线」。为什么需要它：QQ 的在线状态是**服务器侧**的，进程被杀掉后状态会一直挂着；而 SnowLuma 只提供 set_online_status、没有 get_online_status（实测 1404 unknown action），所以「上次是不是我们设的 DND」只能靠本地记账（data/presence.json），由本插件负责两个时机：关闭前设 DND、上线时按记账恢复。注意：计划任务用 taskkill 强杀时不会有任何 JS 钩子执行，那条路由脚本会直接调 POST /api/presence 兜住。",
+  "enabledByDefault": true,
+  "capabilities": [],
+  "permissions": ["presence_control"],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "dndOnShutdown": true,
+    "restoreOnStart": true,
+    "retryTimes": 20,
+    "retryIntervalMs": 3000
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用在线状态守卫",
+      "description": "关掉后不再改 QQ 状态（也就不会再自动恢复「在线」）。"
+    },
+    "dndOnShutdown": {
+      "type": "boolean",
+      "label": "关闭前设「请勿打扰」",
+      "description": "机器人优雅退出（托盘退出/注销）时触发。计划任务强杀那条路由由 停止脚本 直接调接口兜住。"
+    },
+    "restoreOnStart": {
+      "type": "boolean",
+      "label": "上线时恢复「在线」",
+      "description": "只恢复「上次是我们设的请勿打扰」这一种情况；你自己手动设的状态不会被它动。"
+    },
+    "retryTimes": {
+      "type": "number",
+      "label": "上线恢复的最大重试次数",
+      "description": "插件激活可能早于 OneBot 连上，所以要重试。默认 20 次。"
+    },
+    "retryIntervalMs": {
+      "type": "number",
+      "label": "重试间隔（毫秒）",
+      "description": "默认 3000（3 秒）。"
+    }
+  }
+}

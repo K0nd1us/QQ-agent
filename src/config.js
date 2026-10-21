@@ -373,6 +373,18 @@ export const DEFAULT_CONFIG = {
     autoStart: false,         // 开机自启（仅 Electron 桌面端生效）
     closeToTray: true         // 点关闭 = 最小化到托盘
   },
+  // ── QQ 在线状态（在线/请勿打扰…）───────────────────────────────────────
+  // 状态码是 QQ 协议里的整数（NapCat 约定）：10 在线 / 30 离开 / 40 隐身 /
+  // 50 忙碌 / 60 Q我吧 / 70 请勿打扰。SnowLuma 只实现 set_online_status，
+  // 没有 get_online_status，所以"上次是不是我们设的 DND"只能自己记账
+  // （data/presence.json），见 src/presence.js。
+  presence: {
+    enabled: true,
+    dndStatus: 70,          // "请勿打扰"的状态码
+    onlineStatus: 10,       // "在线"的状态码
+    setDndOnShutdown: true, // 优雅退出（托盘退出）时把 DND 的活交给 before-shutdown 钩子
+    restoreOnStart: true    // 启动后若记账里是 DND，就改回在线
+  },
   ui: {
     // 主题：'dark' | 'light' | 'system'（system = 跟随系统偏好）。
     // 前端以 localStorage 为准做到即时生效，这里只是跨设备/重装后保留用。

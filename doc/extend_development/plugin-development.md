@@ -189,11 +189,12 @@ export const hooks = {
   'before-tool': ({ toolName, argsRaw, session, ...ctx }) => {
     if (toolName === 'send_message' && 某个条件) return { block: true, reason: '本次调用被拒绝' };
   },
-  'after-tool': ({ toolName, argsRaw, result, session, ...ctx }) => { /* 观察 */ }
+  'after-tool': ({ toolName, argsRaw, result, session, ...ctx }) => { /* 观察 */ },
+  'before-shutdown': async () => { /* 退出前（优雅退出才触发）：例如把 QQ 状态设成请勿打扰 */ }
 };
 ```
 
-全部 5 个钩子及其语义：
+全部 6 个钩子及其语义：
 
 | 钩子名 | 时机 | 参数（除公共 ctx） | 返回值 |
 |---|---|---|---|
@@ -202,12 +203,17 @@ export const hooks = {
 | `after-response` | 拿到模型响应后 | `response`、`session` | 忽略（就地改 `response`） |
 | `before-tool` | 每次工具调用**之前** | `toolName`、`argsRaw`、`session` | `{ block: true, reason }` → **否决这次调用** |
 | `after-tool` | 每次工具调用**之后** | `toolName`、`argsRaw`、`result`、`session` | 忽略 |
+| `before-shutdown` | **优雅退出**时（托盘退出/正常 stop），在 OneBot 连接关闭之前 | `reason` | 忽略（核心限时 3 秒） |
 
 公共 `ctx`：`chatKey`、`kind`、`chatId`、`chatName`、`model`、`provider`、`visionEnabled`、`searchEnabled`、`proactive`、`sessionId`。
 
 ⚠️ **钩子的硬约束**（这几条不是风格建议，是设计边界）：
 
 1. **单个 Skill 超时 5 秒就被跳过**（`DEFAULT_HOOK_TIMEOUT_MS`）→ 不能在里面做网络请求、下载、模型调用
+   （一次**本地**协议调用如 `api.setPresence()` → `onebot.call` → 127.0.0.1 只有几十毫秒，不算此列；
+   参考 `plugins/qq-presence/`）
+6. `before-shutdown` **只在优雅退出时触发**：计划任务用 `taskkill /F`、`Stop-Process -Force` 杀进程时
+   不会有任何 JS 钩子执行 —— 那种场景必须由停止脚本 / 关机脚本自己先调 `POST /api/presence`。
 2. **钩子错误的隔离方式**是"只记日志、跳过该 Skill" → 钩子坏了不会中断对话，但也不会重试
 3. **不发送消息、不发请求、不重试** —— 需要这些就去注册工具（LLM 型）
 4. 钩子里抛错只影响自己；但反复抛错会在 UI 上留下"上次出错"记录
@@ -344,6 +350,9 @@ export function setup(api) {
 | `api.log/warn/error(...)` | 自动加 `[skill:<id>]` 前缀 |
 | `api.fetch` | ⚠️ 只有清单声明了 `permissions: ["web_fetch"]` 才拿得到；否则调用即 reject |
 | `api.utils.sleep(ms)` / `api.utils.safeJsonParse(text, fallback)` | 小工具 |
+| `api.setPresence(status, options?)` | ⚠️ 只有清单声明了 `permissions: ["presence_control"]` 才拿得到。设 QQ 在线状态：`'dnd'` / `'online'` / 协议整数（10 在线、70 请勿打扰…） |
+| `api.getPresence()` | 读本地记账（`data/presence.json`）：`{ status, dnd, at, source }` 或 `null` |
+| `api.restorePresenceIfDnd(options?)` | 若记账里是"我们设的请勿打扰"就改回在线并清账；不是则空操作。用于"上线时恢复" |
 
 > 注意：能力是 `export const providers` **导出**的，不是 `api.registerXxx` 注册的，也没有 `api.registerHook`。
 
