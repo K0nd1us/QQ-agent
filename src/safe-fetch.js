@@ -210,11 +210,6 @@ export function checkBrowseLock(rawUrl, state = browseLockState()) {
 
 // ── 受限请求 ────────────────────────────────────────────────────────────
 
-function sliceByCodePoints(s, max) {
-  if (s.length <= max) return s;
-  return Array.from(s).slice(0, max).join('');
-}
-
 function readBounded(res, maxBytes, asText) {
   return new Promise((resolve, reject) => {
     const decoder = new StringDecoder('utf8');
@@ -229,22 +224,23 @@ function readBounded(res, maxBytes, asText) {
     };
     res.on('data', (chunk) => {
       if (settled) return;
+      const remaining = Math.max(0, maxBytes - total);
       total += chunk.length;
-      if (asText) text += decoder.write(chunk);
+      if (asText) text += decoder.write(chunk.subarray(0, remaining));
       else chunks.push(chunk);
       // 只用字节数判断是否超限。原实现还额外判断了 text.length >= maxBytes，
       // 但 text.length 是字符数而 maxBytes 是字节数（UTF-8 下中文 1 字符 = 3 字节），
       // 单位不一致，会让刚好读满的响应被误标成 truncated。
       if (total >= maxBytes) {
         try { res.destroy(); } catch { /* ignore */ }
-        finish(resolve, asText ? sliceByCodePoints(text, maxBytes) : Buffer.concat(chunks).subarray(0, maxBytes));
+        finish(resolve, asText ? { body: text, truncated: true } : Buffer.concat(chunks).subarray(0, maxBytes));
       }
     });
     res.on('end', () => {
       if (!settled) {
         if (asText) {
           text += decoder.end();
-          finish(resolve, sliceByCodePoints(text, maxBytes));
+          finish(resolve, { body: text, truncated: false });
         } else {
           finish(resolve, Buffer.concat(chunks));
         }
@@ -280,7 +276,7 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
         return;
       }
       readBounded(res, maxBytes, !asBinary)
-        .then((body) => resolve({ statusCode, body, contentType: String(res.headers['content-type'] || '') }))
+        .then((read) => resolve({ statusCode, ...(asBinary ? { body: read } : read), contentType: String(res.headers['content-type'] || '') }))
         .catch(reject);
     });
     req.on('timeout', () => req.destroy(new Error(`请求超时：${url.hostname}`)));
@@ -291,14 +287,15 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
 
 const MAX_REDIRECTS = 5;
 
-/** 抓取网页文本（≤50000 字符），SSRF 全防护（不做内网例外）。 */
-export async function safeFetch(urlString, { browseLocked = false } = {}) {
+/** 抓取网页文本（默认 50 KB，可配置至 1 MB），SSRF 全防护（不做内网例外）。 */
+export async function safeFetch(urlString, { browseLocked = false, maxBytes = 50000 } = {}) {
+  const limit = Math.max(1, Math.min(1024 * 1024, Math.floor(Number(maxBytes) || 50000)));
   // 锁定校验放在**最前面**，连 DNS 都不做 —— 不在白名单就根本不该发起连接
   const lock = browseLocked ? checkBrowseLock(urlString) : { enabled: false, allowed: true, host: '' };
   if (!lock.allowed) throw new Error(`浏览锁定：${lock.host || '该地址'} 不在允许的域名清单内`);
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, { asBinary: false, maxBytes: 50000 });
+    const result = await requestOnce(url, ip, { asBinary: false, maxBytes: limit });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
@@ -312,7 +309,7 @@ export async function safeFetch(urlString, { browseLocked = false } = {}) {
       continue;
     }
     const body = result.body || '';
-    return { url: url.toString(), statusCode: result.statusCode, truncated: body.length >= 50000, body };
+    return { url: url.toString(), statusCode: result.statusCode, truncated: result.truncated, contentType: result.contentType, body };
   }
   throw new Error('重定向次数过多，已停止');
 }
