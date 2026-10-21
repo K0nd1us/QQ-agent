@@ -454,6 +454,28 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
   return { dir, loaded: true, id: manifest.id, skill };
 }
 
+/**
+ * 兼容"套娃"目录：skills/<id>/<id>/skill.json。
+ *
+ * 市场包或生成式安装偶尔会多套一层目录，直接当模块目录加载会因为顶层没有
+ * 清单而报"缺少 skill.json / plugin.json"（用户在技能页看到的就是这句）。
+ * 这里只下探一层，且必须同时满足：顶层没有清单、顶层只有一个子目录、
+ * 该子目录有清单 —— 不满足就原样返回，让调用方照常报错。
+ */
+function resolveNestedModuleDir(dir, log) {
+  const hasManifest = (d) => fs.existsSync(path.join(d, 'skill.json'))
+    || fs.existsSync(path.join(d, 'plugin.json'));
+  if (hasManifest(dir)) return dir;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return dir; }
+  const subdirs = entries.filter((e) => e.isDirectory() && e.name !== 'node_modules' && !e.name.startsWith('.'));
+  if (entries.some((e) => e.isFile()) || subdirs.length !== 1) return dir;
+  const inner = path.join(dir, subdirs[0].name);
+  if (!hasManifest(inner)) return dir;
+  log(`[skill] ⚠️ ${path.basename(dir)}/ 下多套了一层目录，按 ${path.basename(inner)}/ 加载（建议拍平）`);
+  return inner;
+}
+
 /** 扫描一个目录下的所有 Skill。 */
 async function loadSkillRoot(rootDir, { log = console.log, label = 'skill' } = {}) {
   if (!fs.existsSync(rootDir)) {
@@ -464,7 +486,8 @@ async function loadSkillRoot(rootDir, { log = console.log, label = 'skill' } = {
   }
   const dirs = fs.readdirSync(rootDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
-    .map((e) => path.join(rootDir, e.name));
+    .map((e) => path.join(rootDir, e.name))
+    .map((dir) => resolveNestedModuleDir(dir, log));
   if (!dirs.length) {
     log(`[${label}] ${path.basename(rootDir)}/ 为空：${rootDir}`);
     return { loaded: [], failed: [], empty: true, rootDir };
