@@ -552,13 +552,14 @@ function triggerLabels(entry, ctx) {
   const notes = getConfig().memberNotes || {};
   const noteName = notes[String(entry?.senderId || '')];
   const noteLower = String(noteName || '').toLowerCase();
-  // 「@我」标签：只做精确的昵称/名片匹配。
-  // ⚠️ 不允许 text.startsWith('@') 这种裸前缀命中 —— "@张三 你看他"这类
-  //   与机器人无关的艾特曾被全部标成「@我」，模型会显著提高回应概率。
-  //   真正的唤醒判定（isAtMe）有完整 CQ 码/昵称匹配，标签与它同口径。
-  const selfNick = String(ctx.selfNickname || '');
-  if ((selfNick && text.includes(`@${selfNick}`)) || (nick && text.includes(`@${nick}`))) labels.push('@我');
-  if ((botName && lower.includes(botName)) || (nick && lower.includes(nick))) labels.push('提到我');
+  // Match the wake decision: protocol-derived atMe wins over nickname text,
+  // including false for another user with the same display name.
+  const atMe = typeof entry?.atMe === 'boolean'
+    ? entry.atMe
+    : isAtMe(text, { selfNickname: ctx.selfNickname, botName, selfId: ctx.selfId });
+  if (atMe) labels.push('@我');
+  const mentionText = entry?.atMe === false ? stripMentions(entry).toLowerCase() : lower;
+  if ((botName && mentionText.includes(botName)) || (nick && mentionText.includes(nick))) labels.push('提到我');
   if (noteName && lower.includes(noteLower)) labels.push('提到我（备注名）');
   if (/[?？]$/.test(text.trim()) || /[吗呢]/.test(text)) labels.push('提问');
   if (text.startsWith('[引用 ')) labels.push('引用');
