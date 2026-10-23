@@ -55,6 +55,12 @@ function scheduleSnowlumaReload(opts = {}) {
 }
 
 async function loadSnowlumaPage({ quiet = false } = {}) {
+  const runtimePath = state.status?.runtime?.connectionSettingsPath;
+  if (runtimePath) {
+    const box = $('#snowluma-page');
+    if (box) box.innerHTML = `<div class="snowluma-page-card"><h2>外部协议连接</h2><p>QQ 登录由独立协议服务管理。</p><a class="btn" href="${esc(runtimePath)}">配置协议连接 / Connection settings</a></div>`;
+    return;
+  }
   try {
     const [status, logs, qqLogs, appLogsData] = await Promise.all([
       api('/api/status'),

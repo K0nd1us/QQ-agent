@@ -1,0 +1,32 @@
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: modules/headless/Dockerfile
+      target: runtime
+    image: qq-agent:headless-local
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${QQ_AGENT_BIND_ADDRESS:-127.0.0.1}:${QQ_AGENT_PUBLISH_PORT:-3210}:3210"
+    environment:
+      QQ_AGENT_TOKEN: ${QQ_AGENT_TOKEN:?Set a random console token in your private environment file}
+      QQ_AGENT_ALLOWED_HOSTS: ${QQ_AGENT_ALLOWED_HOSTS:-localhost:3210,127.0.0.1:3210}
+      TZ: ${TZ:-Asia/Shanghai}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - agent-data:/app/data
+      - agent-plugins:/app/plugins
+      - agent-skills:/app/skills
+    stop_grace_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  agent-data:
+  agent-plugins:
+  agent-skills:

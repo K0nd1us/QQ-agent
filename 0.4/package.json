@@ -47,6 +47,8 @@
   "scripts": {
     "start": "electron .",
     "server": "node src/server.js",
+    "server:headless": "node modules/headless/server.js",
+    "test:headless": "node --test test/headless-transport.test.mjs test/headless-runtime.test.mjs",
     "setup": "node scripts/setup.mjs",
     "setup:check": "node scripts/setup.mjs --check",
     "setup:napcat": "node scripts/setup-napcat.mjs",

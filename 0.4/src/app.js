@@ -81,7 +81,7 @@ function compareSemver(a, b) {
    防止监听器链式递归（见 createApp 内的递归护栏注释）。 */
 const appLogFns = new WeakSet();
 
-export function createApp({ log = console.log } = {}) {
+export function createApp({ log = console.log, runtime = null } = {}) {
   const cfg = getConfig();
 
   // 详尽日志：把 createApp 的 log 接到分级日志系统（落盘 + 内存缓冲 + SSE）。
@@ -625,18 +625,31 @@ export function createApp({ log = console.log } = {}) {
     }
   };
 
+  const server = http.createServer((req, res) => {
+    handleHttp(req, res).catch((error) => {
+      log('[http] 处理出错:', error?.message ?? error);
+      try {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: String(error?.message ?? error) }));
+      } catch { /* ignore */ }
+    });
+  });
+
   // ── 组件 ──
   const visionScan = { running: false };   // 模型图片输入能力扫描的运行状态
   const store = new ChatStore(cfg.store?.maxMessagesPerChat ?? 0);   // 0 = 不限
   const memory = new MemoryStore();
   const sessions = new SessionRegistry(cfg.store?.keepSessionFiles ?? 0);   // 0 = 不限
-  const onebot = new OneBotClient({
-    wsUrl: cfg.snowluma?.wsUrl,
-    httpUrl: cfg.snowluma?.httpUrl,
-    accessToken: cfg.snowluma?.accessToken,
-    httpToken: cfg.snowluma?.httpAccessToken || cfg.snowluma?.accessToken,
-    onEvent: (event) => handleOneBotEvent(event).catch((error) => log('[ingest] 处理事件出错:', error?.message ?? error))
-  });
+  const onProtocolEvent = (event) => handleOneBotEvent(event).catch((error) => log('[ingest] 处理事件出错:', error?.message ?? error));
+  const onebot = runtime?.createConnection
+    ? runtime.createConnection({ config: cfg, server, onEvent: onProtocolEvent })
+    : new OneBotClient({
+      wsUrl: cfg.snowluma?.wsUrl,
+      httpUrl: cfg.snowluma?.httpUrl,
+      accessToken: cfg.snowluma?.accessToken,
+      httpToken: cfg.snowluma?.httpAccessToken || cfg.snowluma?.accessToken,
+      onEvent: onProtocolEvent
+    });
   const stickers = new StickerManager(onebot);
   const sender =   new SendQueue({
     onebot, store,
@@ -646,6 +659,7 @@ export function createApp({ log = console.log } = {}) {
   const reminders = new ReminderStore();
   const videoReader = new VideoReader(onebot);
   const orchestrator = new Orchestrator({ store, memory, stickers, sender, sessions, onebot, emit, reminders, videoReader });
+  runtime?.attach?.({ server, connection: onebot, orchestrator, emit });
 
   // 远程价格表固定为官网公开地址；不从用户配置读取，避免被页面/配置篡改。
   initPriceFeed(FIXED_PRICE_FEED_URL);
@@ -732,6 +746,7 @@ export function createApp({ log = console.log } = {}) {
 
   /** 把候选列表同步进配置 + 挂到 onebot 实例（不立即连接）。返回是否有变化。 */
   function syncSnowlumaTokens() {
+    if (runtime) return false;
     try {
       const candidates = readSnowlumaTokenCandidates();
       if (!candidates.length) return false;
@@ -753,6 +768,7 @@ export function createApp({ log = console.log } = {}) {
   // 401 / 未连接时：轮换下一个候选 token 重连（3 秒重连循环已有，轮换成本为零）
   let tokenSyncRetryAt = 0;
   function maybeRecoverOnebot() {
+    if (runtime) return;
     const now = Date.now();
     if (now - tokenSyncRetryAt < 5000) return;   // 限频
     tokenSyncRetryAt = now;
@@ -1103,16 +1119,6 @@ export function createApp({ log = console.log } = {}) {
   }
 
   // ── HTTP API ──
-  const server = http.createServer((req, res) => {
-    handleHttp(req, res).catch((error) => {
-      log('[http] 处理出错:', error?.message ?? error);
-      try {
-        res.writeHead(500, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: String(error?.message ?? error) }));
-      } catch { /* ignore */ }
-    });
-  });
-
   function json(res, code, data) {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(data));
@@ -1169,6 +1175,7 @@ export function createApp({ log = console.log } = {}) {
   }
 
   function originAllowed(req) {
+    if (runtime?.originAllowed) return runtime.originAllowed(req);
     const host = String(req.headers.host ?? '');
     if (!isLoopbackHostHeader(host)) return false;
     const origin = String(req.headers.origin ?? '');
@@ -1187,6 +1194,7 @@ export function createApp({ log = console.log } = {}) {
   }
 
   function authorize(req) {
+    if (runtime?.authorize) return runtime.authorize(req);
     const token = String(getConfig().server?.token ?? '');
     if (!token) return true;
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -1266,6 +1274,7 @@ export function createApp({ log = console.log } = {}) {
    *    已删除 —— 来源校验交由 originAllowed() 统一负责。
    */
   function keyEndpointAllowed(req) {
+    if (runtime) return authorize(req) && originAllowed(req);
     const token = String(getConfig().server?.token ?? '');
     if (token) {
       const url = new URL(req.url, 'http://127.0.0.1');
@@ -1298,12 +1307,13 @@ export function createApp({ log = console.log } = {}) {
     qqPortableStatus, qqPortableLogs, launchPortableQQ, stopPortableQQ,
     visionScan, isPortOpen,
     buildUsageStats, buildUsageBreakdown,
-    reloadSkills
+    reloadSkills, runtime
   });
 
   async function handleHttp(req, res) {
     const url = new URL(req.url, 'http://127.0.0.1');
     const pathname = url.pathname;
+    if (await runtime?.handleRequest?.({ req, res, url, readBody, json })) return;
 
     // SSE
     if (pathname === '/api/events' && req.method === 'GET') {
@@ -1460,9 +1470,9 @@ export function createApp({ log = console.log } = {}) {
   async function listenOn(port) {
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => {
+      server.listen(port, runtime?.listenOptions?.().host || '127.0.0.1', () => {
         server.off('error', reject);
-        resolve(port); // 必须把实际端口传回去，Electron 壳要用它加载页面
+        resolve(server.address().port); // 也允许显式运行模块使用动态端口
       });
     });
   }
@@ -1475,10 +1485,10 @@ export function createApp({ log = console.log } = {}) {
     // 新顺序：HTTP（页面先活）→ 遥测(纯后台) → **Skill 与 SnowLuma 并行** →
     //         OneBot 连接 → 就绪。会话索引的磁盘对账（reconcileInBackground）
     //         在 HTTP 起来后就排上，不占启动关键路径。
-    const basePort = Number(getConfig().server?.port) || 3210;
+    const basePort = runtime?.listenOptions?.().port ?? (Number(getConfig().server?.port) || 3210);
     let port = null;
     let lastError = null;
-    for (let p = basePort; p < basePort + 10; p++) {
+    for (let p = basePort; p < basePort + (runtime ? 1 : 10); p++) {
       try {
         port = await listenOn(p);
         break;
@@ -1532,7 +1542,7 @@ export function createApp({ log = console.log } = {}) {
     })();
 
     const snowlumaReady = (async () => {
-      if (!getConfig().snowluma?.autoLaunch) return;
+      if (runtime || !getConfig().snowluma?.autoLaunch) return;
       try {
         // 等待就绪用 WebUI 端口（进程即起即听）；OneBot WS 端口要等账号登录，
         // 在这里等 3001 是"永远等不到"的（没人扫码就一直挂着 20 秒）。
@@ -1571,7 +1581,7 @@ export function createApp({ log = console.log } = {}) {
     // 断线（SnowLuma 重启等）时轮询自动恢复 —— 恢复延迟从"最多 30 秒"降到
     // "最多 2 秒 + 一次连接建立"。
     const obWsPort = snowlumaWsPort();
-    obPortPollTimer = setInterval(async () => {
+    obPortPollTimer = runtime ? null : setInterval(async () => {
       if (onebot.connected) return;          // 连着：无事可做（轮询本身极廉价）
       const open = await isPortOpen('127.0.0.1', obWsPort);
       if (open && !onebot.connected) {
@@ -1579,7 +1589,7 @@ export function createApp({ log = console.log } = {}) {
         onebot.reconnect();
       }
     }, 2000);
-    obPortPollTimer.unref?.();
+    obPortPollTimer?.unref?.();
     // ── WS 就绪后的账号信息兜底（2026-09-19）────────────────────────────────
     // SnowLuma 重启/换号后，QQ Agent 侧的 WS 可能先于 OneBot 实例完全就绪连上，
     // open 时的 get_login_info 失败 → selfInfo 恒空 → UI"检测不到账号"。
@@ -1598,7 +1608,8 @@ export function createApp({ log = console.log } = {}) {
     if (getConfig().proactive?.enabled) orchestrator.startProactiveLoop();
     orchestrator.startReminderLoop();   // 提醒（闹钟）调度：到点往群里发提醒
     log(`控制台已就绪：http://127.0.0.1:${port}`);
-    log(`OneBot（SnowLuma）: ws=${getConfig().snowluma?.wsUrl} http=${getConfig().snowluma?.httpUrl}`);
+    if (runtime) log(`运行模块 / Runtime: ${runtime.name}`);
+    else log(`OneBot（SnowLuma）: ws=${getConfig().snowluma?.wsUrl} http=${getConfig().snowluma?.httpUrl}`);
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
     return port;
   }
@@ -1634,6 +1645,7 @@ export function createApp({ log = console.log } = {}) {
   }
 
   async function stop() {
+    runtime?.stop?.();
     // 先停掉热重载 watcher：否则 stop() 之后文件变动仍会触发重载 + 广播
     try { pluginWatcher?.close?.(); } catch { /* ignore */ }
     pluginWatcher = null;

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QQ Agent · 协议连接 / Connection</title><link rel="stylesheet" href="/runtime/module.css"></head>
+<body><main><a href="/">← 管理控制台 / Console</a><h1>协议连接 / Connection</h1><p id="status" role="status"></p><form id="connection">
+<label><input id="enabled" type="checkbox">启用接入 / Enable connection</label>
+<label for="type">协议 / Protocol</label><select id="type"><option value="onebot">OneBot v11</option><option value="qqbot">QQ official bot (Gateway)</option></select>
+<fieldset id="onebot"><legend>OneBot v11</legend>
+<label for="mode">连接模式 / Mode</label><select id="mode"><option value="forward">正向 / Forward WS</option><option value="reverse">反向 / Reverse WS</option></select>
+<label for="apiTransport">API 传输 / API transport</label><select id="apiTransport"><option value="ws">WebSocket</option><option value="http">HTTP</option></select>
+<label for="wsUrl">正向 WebSocket 地址 / Forward WS URL</label><input id="wsUrl" type="url" required>
+<label for="httpUrl">HTTP API 地址 / HTTP API URL</label><input id="httpUrl" type="url" required>
+<label for="reversePath">反向连接路径 / Reverse WS path</label><input id="reversePath" required>
+<label for="accessToken">连接令牌 / Access token</label><input id="accessToken" type="password" autocomplete="new-password" placeholder="留空保留 / Blank keeps saved value">
+<label for="httpAccessToken">HTTP 独立令牌 / Separate HTTP token</label><input id="httpAccessToken" type="password" autocomplete="new-password" placeholder="留空保留 / Blank keeps saved value">
+</fieldset>
+<fieldset id="qqbot"><legend>QQ official bot</legend><p>需要账号具有 Gateway 接入权限 / Requires Gateway permission.</p>
+<label for="appId">AppID</label><input id="appId"><label for="appSecret">AppSecret</label><input id="appSecret" type="password" autocomplete="new-password" placeholder="留空保留 / Blank keeps saved value">
+<label for="intents">Intents</label><input id="intents" type="number" min="1" max="4294967295"><label><input id="sandbox" type="checkbox">沙箱 / Sandbox</label></fieldset>
+<button type="submit">保存并连接 / Save and connect</button><p id="result" role="status"></p></form></main><script src="/runtime/connection.js"></script></body></html>

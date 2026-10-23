@@ -1,0 +1,42 @@
+name: Optional headless runtime
+on:
+  pull_request:
+    paths:
+      - '0.4/src/**'
+      - '0.4/modules/headless/**'
+      - '0.4/test/headless-*.test.mjs'
+      - '0.4/package*.json'
+      - '0.4/.dockerignore'
+      - '.github/workflows/headless-runtime.yml'
+  push:
+    paths:
+      - '0.4/src/**'
+      - '0.4/modules/headless/**'
+      - '0.4/test/headless-*.test.mjs'
+      - '0.4/package*.json'
+      - '0.4/.dockerignore'
+      - '.github/workflows/headless-runtime.yml'
+permissions:
+  contents: read
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: '0.4'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: '0.4/package-lock.json'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run test:headless
+      - if: matrix.node == 22
+        run: |
+          docker build --target test -t qq-agent-headless-test -f modules/headless/Dockerfile .
+          docker run --rm --network none qq-agent-headless-test

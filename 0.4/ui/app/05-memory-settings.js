@@ -216,7 +216,7 @@ async function loadMemoryDetail(chatKey) {
         e.preventDefault();
         e.stopPropagation();
         const uid = String(el.dataset.qq || '').trim();
-        if (!/^\d{1,15}$/.test(uid)) { alert('该群友缺少 QQ 号，无法定位聊天记录'); return; }
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) { alert('该群友缺少 QQ 号或 OpenID，无法定位聊天记录'); return; }
         el.disabled = true;
         const old = el.textContent;
         el.textContent = '更新中…';
@@ -310,7 +310,7 @@ function openMemberImpressModal(chatKey, member) {
     const nm = ($('#mi-name')?.value || $('#mi-nickname')?.value || '').trim();
     const newNote = ($('#mi-note')?.value || '').trim();
     const lines = ($('#mi-imps')?.value || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (!/^\d{1,15}$/.test(qq)) { alert('QQ 号必须是数字'); return; }
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(qq)) { alert('请输入 QQ 号或 OpenID'); return; }
     try {
       await api(`/api/memory-files/${chatKey.replace(':', '_')}/members/${qq}`, {
         method: 'PUT',

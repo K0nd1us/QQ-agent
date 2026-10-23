@@ -92,38 +92,45 @@ export function createRoutes(deps) {
         const usage = sessions.todayUsage(dayKey);
         const cfgNow = getConfig();
         const cost = estimateCost(usage, { model: cfgNow.api?.model });
-        // ┚ SnowLuma 运行判定用 WebUI 端口（进程即起即听）。
-        // WS 3001 要等账号登录后才监听，用它判"运行中"会把"起了但未登录"
-        // 误报成"未运行"（进而触发二次拉起 → 双实例管道冲突）。
-        const webuiPort = deps.snowlumaWebuiPort();
-        // 两个端口探测并行：串行时最坏 1.6s（各 800ms 超时），/api/status 每次都卡这么久
-        const [slRunning, obPortOpen] = await Promise.all([
-          deps.isPortOpen('127.0.0.1', webuiPort),
-          deps.isPortOpen('127.0.0.1', snowlumaWsPort())
-        ]);
-        // 诊断：把"连不上"拆成三种用户能看懂的原因（给 UI 就绪度体检用）。
-        let onebotDiagnosis = '';
-        if (!onebot.connected) {
-          if (!slRunning) onebotDiagnosis = 'SnowLuma 未运行：请到 SnowLuma 页签启动';
-          else if (!obPortOpen) onebotDiagnosis = 'SnowLuma 已运行但无账号登录：请在 QQ 里完成登录（登录后数秒内会自动连上）';
-          else if (String(onebot.lastConnectError || '').includes('401')) onebotDiagnosis = '访问令牌不匹配：正在自动轮换重试，若持续出现请在设置里核对 OneBot 令牌';
-          else onebotDiagnosis = onebot.lastConnectError ? `连接失败：${String(onebot.lastConnectError).slice(0, 120)}` : '连接中…';
+        let protocolStatus;
+        if (deps.runtime?.status) protocolStatus = await deps.runtime.status();
+        else {
+          // ┚ SnowLuma 运行判定用 WebUI 端口（进程即起即听）。
+          // WS 3001 要等账号登录后才监听，用它判"运行中"会把"起了但未登录"
+          // 误报成"未运行"（进而触发二次拉起 → 双实例管道冲突）。
+          const webuiPort = deps.snowlumaWebuiPort();
+          // 两个端口探测并行：串行时最坏 1.6s（各 800ms 超时），/api/status 每次都卡这么久
+          const [slRunning, obPortOpen] = await Promise.all([
+            deps.isPortOpen('127.0.0.1', webuiPort),
+            deps.isPortOpen('127.0.0.1', snowlumaWsPort())
+          ]);
+          // 诊断：把"连不上"拆成三种用户能看懂的原因（给 UI 就绪度体检用）。
+          let onebotDiagnosis = '';
+          if (!onebot.connected) {
+            if (!slRunning) onebotDiagnosis = 'SnowLuma 未运行：请到 SnowLuma 页签启动';
+            else if (!obPortOpen) onebotDiagnosis = 'SnowLuma 已运行但无账号登录：请在 QQ 里完成登录（登录后数秒内会自动连上）';
+            else if (String(onebot.lastConnectError || '').includes('401')) onebotDiagnosis = '访问令牌不匹配：正在自动轮换重试，若持续出现请在设置里核对 OneBot 令牌';
+            else onebotDiagnosis = onebot.lastConnectError ? `连接失败：${String(onebot.lastConnectError).slice(0, 120)}` : '连接中…';
+          }
+          protocolStatus = {
+            onebot: {
+              connected: onebot.connected,
+              everConnected: onebot.everConnected,
+              error: onebot.lastConnectError,
+              diagnosis: onebotDiagnosis,
+              self: onebot.selfInfo ? { userId: onebot.selfId, nickname: onebot.selfNickname } : null
+            },
+            snowluma: {
+              dir: snowlumaDir(),
+              running: slRunning,
+              webuiUrl: snowlumaWebuiUrl(),
+              ...snowlumaStatus()
+            },
+            qqPortable: await qqPortableStatus()
+          };
         }
         return json(res, 200, {
-          onebot: {
-            connected: onebot.connected,
-            everConnected: onebot.everConnected,
-            error: onebot.lastConnectError,
-            diagnosis: onebotDiagnosis,
-            self: onebot.selfInfo ? { userId: onebot.selfId, nickname: onebot.selfNickname } : null
-          },
-          snowluma: {
-            dir: snowlumaDir(),
-            running: slRunning,
-            webuiUrl: snowlumaWebuiUrl(),
-            ...snowlumaStatus()
-          },
-          qqPortable: await qqPortableStatus(),
+          ...protocolStatus,
           orchestrator: orchestrator.statusSummary(),
           usage,
           cost,
@@ -1073,7 +1080,11 @@ export function createRoutes(deps) {
       method: 'POST', pattern: '/api/config',
       handler: async ({ req, res, json }) => {
         const patch = await readBody(req);
+        try { deps.runtime?.validateConfig?.(patch); }
+        catch (error) { return json(res, 400, { error: error.message }); }
+        const before = getConfig();
         const next = updateConfig(patch);
+        await deps.runtime?.configChanged?.(next, before);
         store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
         sessions?.setKeepFiles?.(next.store?.keepSessionFiles ?? 0);
         if (next.proactive?.enabled) orchestrator.startProactiveLoop(); else orchestrator.stopProactiveLoop();
@@ -1200,7 +1211,7 @@ export function createRoutes(deps) {
         const chats = store.listChats().map((key) => ({ key, ...store.getChatMeta(key) }))
           .sort((a, b) => b.lastTs - a.lastTs);
         await Promise.allSettled(chats.map(async (c) => {
-          const m = /^group:(\d+)$/.exec(String(c.key || ''));
+          const m = /^group:([A-Za-z0-9_-]+)$/.exec(String(c.key || ''));
           if (!m) { c.chatName = ''; return; }
           try {
             c.chatName = await Promise.race([
@@ -1241,14 +1252,14 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'GET', pattern: /^\/api\/memory-files\/(group|private)_(\d+)$/,
+      method: 'GET', pattern: /^\/api\/memory-files\/(group|private)_([A-Za-z0-9_-]+)$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         return json(res, 200, { ...memory.query(chatKey), members: memory.members(chatKey) });
       }
     },
     {
-      method: 'PUT', pattern: /^\/api\/memory-files\/(group|private)_(\d+)\/members\/(\d+)$/,
+      method: 'PUT', pattern: /^\/api\/memory-files\/(group|private)_([A-Za-z0-9_-]+)\/members\/([A-Za-z0-9_-]+)$/,
       handler: async ({ req, res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const body = await bodyOf(req);
@@ -1267,7 +1278,7 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)\/members\/(\d+)$/,
+      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_([A-Za-z0-9_-]+)\/members\/([A-Za-z0-9_-]+)$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         memory.removeMember(chatKey, match[3]);
@@ -1277,7 +1288,7 @@ export function createRoutes(deps) {
     },
     {
       // 删除整个会话的记忆（记忆页「删除本会话记忆」按钮）
-      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)$/,
+      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_([A-Za-z0-9_-]+)$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         memory.removeChat(chatKey);
@@ -1291,11 +1302,11 @@ export function createRoutes(deps) {
         try {
           const body = await bodyOf(req);
           const chatKey = String(body.chatKey || '');
-          if (!/^(group|private):\d+$/.test(chatKey)) return json(res, 400, { ok: false, error: 'chatKey 格式错误' });
+          if (!/^(group|private):[A-Za-z0-9_-]+$/.test(chatKey)) return json(res, 400, { ok: false, error: 'chatKey 格式错误' });
           let userIds = null;
           if (body.userIds != null) {
             const arr = Array.isArray(body.userIds) ? body.userIds : [body.userIds];
-            userIds = arr.map((u) => String(u ?? '').trim()).filter((u) => /^\d{1,15}$/.test(u));
+            userIds = arr.map((u) => String(u ?? '').trim()).filter((u) => /^[A-Za-z0-9_-]{1,128}$/.test(u));
             if (!userIds.length) return json(res, 400, { ok: false, error: 'userIds 需为 QQ 号数组' });
           }
           const force = body.force !== false;
@@ -1315,7 +1326,7 @@ export function createRoutes(deps) {
 
     // ── 存档消息 ─────────────────────────────────────────────────────
     {
-      method: 'GET', pattern: /^\/api\/chats\/(group|private)_(\d+)\/messages$/,
+      method: 'GET', pattern: /^\/api\/chats\/(group|private)_([A-Za-z0-9_-]+)\/messages$/,
       handler: async ({ res, json, url, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const limit = Math.min(1048576, Math.max(1, Number(url.searchParams.get('limit')) || 1048576));
@@ -1369,7 +1380,7 @@ export function createRoutes(deps) {
 
     // ── 群成员 / 会话控制 ────────────────────────────────────────────
     {
-      method: 'GET', pattern: /^\/api\/groups\/(\d+)\/members$/,
+      method: 'GET', pattern: /^\/api\/groups\/([A-Za-z0-9_-]+)\/members$/,
       handler: async ({ res, json, match }) => {
         try {
           const list = await onebot.call('get_group_member_list', { group_id: Number(match[1]) });
@@ -1383,11 +1394,11 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/wake$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_([A-Za-z0-9_-]+)\/wake$/,
       handler: async ({ res, json }) => json(res, 410, { error: '已移除：不触发的消息现在会立即标为已读，无需手动唤醒' })
     },
     {
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/test-send$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_([A-Za-z0-9_-]+)\/test-send$/,
       handler: async ({ req, res, json, match }) => {
         const body = await readBody(req);
         const text = String(body.text ?? '').trim();
@@ -1423,12 +1434,12 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/mark-read$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_([A-Za-z0-9_-]+)\/mark-read$/,
       handler: async ({ res, json, match }) => json(res, 200, { ok: true, marked: store.drainUnread(`${match[1]}:${match[2]}`).length })
     },
     {
       // 清空某会话的全部消息（整体清除存档）
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/clear$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_([A-Za-z0-9_-]+)\/clear$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const removed = store.clearChat(chatKey);
@@ -1438,7 +1449,7 @@ export function createRoutes(deps) {
     },
     {
       // 仅屏蔽（不删除）：把某会话全部未读标记为已读，不再触发回复
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/mute$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_([A-Za-z0-9_-]+)\/mute$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const marked = store.muteUnread(chatKey);
@@ -1448,7 +1459,7 @@ export function createRoutes(deps) {
     },
     {
       // 部分清除：删除指定本地 id 的消息
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/delete-messages$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_([A-Za-z0-9_-]+)\/delete-messages$/,
       handler: async ({ req, res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const body = await bodyOf(req);

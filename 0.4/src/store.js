@@ -22,7 +22,7 @@ const MESSAGES_DIR = path.join(DATA_DIR, 'messages');
 
 function chatFile(chatKey) {
   // chatKey 形如 group:123 / private:456
-  const safe = String(chatKey).replace(/[^a-z0-9_]/gi, '_');
+  const safe = String(chatKey).replace(/[^a-z0-9_-]/gi, '_');
   return path.join(MESSAGES_DIR, `${safe}.json`);
 }
 
@@ -61,9 +61,9 @@ export class ChatStore {
   listChats() {
     // 从磁盘文件名还原（group_123.json -> group:123），已加载的直接带上
     try {
-      const files = fs.readdirSync(MESSAGES_DIR).filter((f) => /^(group|private)_\d+\.json$/.test(f));
+      const files = fs.readdirSync(MESSAGES_DIR).filter((f) => /^(group|private)_[A-Za-z0-9_-]+\.json$/.test(f));
       for (const f of files) {
-        const m = /^(group|private)_(\d+)\.json$/.exec(f);
+        const m = /^(group|private)_([A-Za-z0-9_-]+)\.json$/.exec(f);
         if (m) this.#state(`${m[1]}:${m[2]}`);
       }
     } catch { /* 目录不存在 */ }
