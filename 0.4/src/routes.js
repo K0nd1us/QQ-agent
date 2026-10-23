@@ -47,7 +47,7 @@ export function createRoutes(deps) {
     sanitizeConfig, keyEndpointAllowed, sanitizeProvider,
     readBody, authorize,
     visionScan,
-    buildUsageStats, buildUsageBreakdown,
+    buildUsageStats, buildUsageBreakdown, persistUsageBeforeSessionClear,
     reloadSkills
   } = deps;
 
@@ -1058,7 +1058,12 @@ export function createRoutes(deps) {
       // 主动删除一条会话记录（正在运行的不能删）
       method: 'DELETE', pattern: /^\/api\/sessions\/([\w-]+)$/,
       handler: async ({ res, json, match }) => {
-        const removed = sessions.remove(match[1]);
+        let removed;
+        try {
+          removed = sessions.remove(match[1], persistUsageBeforeSessionClear);
+        } catch {
+          return json(res, 500, { ok: false, error: '用量统计保存失败，已保留会话记录；请稍后重试。' });
+        }
         if (!removed) return json(res, 409, { ok: false, error: '会话不存在或正在运行（运行中的会话不能删除）' });
         emit('session-end', { sessionId: match[1], status: 'deleted' });
         return json(res, 200, { ok: true });
@@ -1068,7 +1073,12 @@ export function createRoutes(deps) {
       // 清空全部已结束的会话记录（保留运行中/等待中的）
       method: 'POST', pattern: '/api/sessions/clear-finished',
       handler: async ({ res, json }) => {
-        const removed = sessions.clearFinished();
+        let removed;
+        try {
+          removed = sessions.clearFinished(persistUsageBeforeSessionClear);
+        } catch {
+          return json(res, 500, { ok: false, error: '用量统计保存失败，已保留会话记录；请稍后重试。' });
+        }
         emit('session-end', { status: 'cleared', removed });
         return json(res, 200, { ok: true, removed });
       }

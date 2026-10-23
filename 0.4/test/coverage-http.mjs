@@ -499,9 +499,19 @@ c.section('7. 会话 / 存档 / 记忆');
   await c.check('DELETE /api/sessions/:id：删除已结束会话', async () => {
     const s = app.sessions.create({ chatKey: 'group:789', trigger: '待删除会话' });
     app.sessions.finish(s.id, 'done');
+    const sessionFile = path.join(process.env.QQ_AGENT_DATA_DIR, 'sessions', `${s.id}.json`);
+    const now = Date.now();
+    const before = await hit('GET', '/api/usage/stats?range=today');
+    fs.writeFileSync(sessionFile, JSON.stringify({
+      id: s.id, chatKey: 'group:789', startedAt: now - 1000, endedAt: now,
+      status: 'done', model: 'test-model-a', vendor: 'test', webSearchCount: 0,
+      messages: [{ raw: { created: Math.floor(now / 1000), model: 'test-model-a', usage: { prompt_tokens: 2345, completion_tokens: 0 } } }]
+    }));
     const r = await hit('DELETE', `/api/sessions/${s.id}`);
     assert.equal(r.status, 200);
     assert.equal(r.data.ok, true);
+    const after = await hit('GET', '/api/usage/stats?range=today');
+    assert.equal(after.data.totals.promptTokens, before.data.totals.promptTokens + 2345, '删除单个会话后用量仍应保留');
   });
 
   await c.check('DELETE /api/sessions/:id：运行中的会话拒绝删除（409）', async () => {
@@ -513,11 +523,33 @@ c.section('7. 会话 / 存档 / 记忆');
   });
 
   await c.check('POST /api/sessions/clear-finished：清空已结束会话', async () => {
+    const before = await hit('GET', '/api/usage/stats?range=today');
+    const promptBefore = before.data.totals.promptTokens;
     const s = app.sessions.create({ chatKey: 'group:789', trigger: '另一个已结束' });
     app.sessions.finish(s.id, 'done');
+    const sessionsDir = path.join(process.env.QQ_AGENT_DATA_DIR, 'sessions');
+    const sessionFile = path.join(sessionsDir, `${s.id}.json`);
+    const now = Date.now();
+    fs.writeFileSync(sessionFile, JSON.stringify({
+      id: s.id, chatKey: 'group:789', startedAt: now - 1000, endedAt: now,
+      status: 'done', model: 'test-model-a', vendor: 'test', webSearchCount: 0,
+      messages: [{ raw: { created: Math.floor(now / 1000), model: 'test-model-a', usage: { prompt_tokens: 1234, completion_tokens: 5 } } }]
+    }));
+    const carryoverFile = path.join(process.env.QQ_AGENT_DATA_DIR, 'usage-carryover.json');
+    const savedCarryover = fs.existsSync(carryoverFile)
+      ? fs.readFileSync(carryoverFile, 'utf8')
+      : JSON.stringify({ version: 1, days: {} });
+    fs.writeFileSync(carryoverFile, '{bad json');
+    const failedSnapshot = await hit('POST', '/api/sessions/clear-finished');
+    assert.equal(failedSnapshot.status, 500, '快照不可读时应拒绝清除');
+    assert.ok(fs.existsSync(sessionFile), '快照失败时会话文件应保留');
+    fs.writeFileSync(carryoverFile, savedCarryover);
+
     const r = await hit('POST', '/api/sessions/clear-finished');
     assert.equal(r.status, 200);
     assert.ok(r.data.removed >= 1, '应报告清理数量');
+    const after = await hit('GET', '/api/usage/stats?range=today');
+    assert.equal(after.data.totals.promptTokens, promptBefore + 1234, '清除后统计仍应保留已清除会话用量');
   });
 
   await c.check('GET /api/chats：返回会话列表（带 lastTs 排序）', async () => {

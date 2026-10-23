@@ -516,6 +516,16 @@ c.section('7. sessions.js 会话留档');
     sessions.finish(running.id, 'done');
   });
 
+  await c.check('clearFinished：用量持久化失败时不删除会话', () => {
+    const created = sessions.create({ chatKey: 'group:5', trigger: '保留用量' });
+    sessions.finish(created.id, 'done');
+    const file = path.join(process.env.QQ_AGENT_DATA_DIR, 'sessions', `${created.id}.json`);
+    assert.throws(() => sessions.clearFinished(() => { throw new Error('snapshot failed'); }), /snapshot failed/);
+    assert.ok(sessions.get(created.id), '快照失败时会话仍应留在索引');
+    assert.ok(fs.existsSync(file), '快照失败时会话文件仍应保留');
+    sessions.clearFinished();
+  });
+
   await c.check('keepSessionFiles：上限生效（只保留最近 N 个）', () => {
     const s = new SessionRegistry(2);
     for (let i = 0; i < 5; i++) {

@@ -717,7 +717,7 @@ export function createApp({ log = console.log } = {}) {
     sanitizeConfig, keyEndpointAllowed, sanitizeProvider,
     readBody, authorize,
     visionScan,
-    buildUsageStats, buildUsageBreakdown,
+    buildUsageStats, buildUsageBreakdown, persistUsageBeforeSessionClear,
     reloadSkills
   });
 
@@ -1310,6 +1310,8 @@ function saveUsageDaily(days) {
    不再每次全量扫 sessions/。日文件缺失时才按需回算该日并落盘。 */
 const USAGE_DAYS_DIR = path.join(DATA_DIR, 'usage-days');
 const USAGE_DAY_VERSION = 1;
+const USAGE_CARRYOVER_FILE = path.join(DATA_DIR, 'usage-carryover.json');
+const USAGE_CARRYOVER_VERSION = 1;
 
 /** 一天是否完全没量（调用/成本/token/搜索都为 0）——空日不进柱图与按天表。 */
 function isEmptyDayAgg(agg) {
@@ -1345,7 +1347,7 @@ function loadUsageDayFile(dayKey) {
 function saveUsageDayFile(dayKey, aggregates) {
   // 空日不落盘：曾因 completedDayKeys(0) 从 1970 枚举，给每一天都写了空壳文件
   // （两万多个 463 字节 JSON），把 usage-days 目录和统计全部打乱。
-  if (isEmptyDayAgg(aggregates)) return;
+  if (isEmptyDayAgg(aggregates)) return true;
   try {
     fs.mkdirSync(USAGE_DAYS_DIR, { recursive: true });
     const tmp = `${usageDayFile(dayKey)}.${process.pid}.tmp`;
@@ -1353,7 +1355,101 @@ function saveUsageDayFile(dayKey, aggregates) {
       version: USAGE_DAY_VERSION, day: dayKey, savedAt: Date.now(), aggregates
     }, null, 1), 'utf8');
     fs.renameSync(tmp, usageDayFile(dayKey));
-  } catch { /* 写失败只是下次再算，不影响主流程 */ }
+    return true;
+  } catch { /* 写失败只是下次再算，不影响主流程 */ return false; }
+}
+
+function loadUsageCarryover() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(USAGE_CARRYOVER_FILE, 'utf8'));
+    if (parsed?.version !== USAGE_CARRYOVER_VERSION || !parsed.days || typeof parsed.days !== 'object') {
+      throw new Error('invalid usage carryover format');
+    }
+    return parsed.days;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw error;
+  }
+}
+
+function saveUsageCarryover(days) {
+  try {
+    if (!Object.keys(days).length) {
+      fs.rmSync(USAGE_CARRYOVER_FILE, { force: true });
+      return true;
+    }
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = `${USAGE_CARRYOVER_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ version: USAGE_CARRYOVER_VERSION, savedAt: Date.now(), days }, null, 1), 'utf8');
+    fs.renameSync(tmp, USAGE_CARRYOVER_FILE);
+    return true;
+  } catch { return false; }
+}
+
+function sumUsageTotals(a = {}, b = {}) {
+  const out = { ...a };
+  for (const key of ['cost', 'peakCost', 'offPeakCost', 'peakTokens', 'offPeakTokens',
+    'promptTokens', 'completionTokens', 'cachedTokens', 'totalTokens', 'runs', 'exactCalls']) {
+    out[key] = (Number(a[key]) || 0) + (Number(b[key]) || 0);
+  }
+  out.hasPeakModel = Boolean(a.hasPeakModel || b.hasPeakModel);
+  out.cacheHitRate = out.promptTokens ? Math.min(1, out.cachedTokens / out.promptTokens) : 0;
+  out.peakRatio = (out.peakTokens + out.offPeakTokens)
+    ? out.peakTokens / (out.peakTokens + out.offPeakTokens) : 0;
+  return out;
+}
+
+function mergeUsageGroups(a = [], b = []) {
+  const groups = new Map();
+  for (const item of [...a, ...b]) {
+    const key = String(item.key ?? '');
+    groups.set(key, groups.has(key)
+      ? { ...groups.get(key), ...sumUsageTotals(groups.get(key), item), key }
+      : { ...item, ...sumUsageTotals({}, item), key });
+  }
+  return [...groups.values()].sort((x, y) => y.cost - x.cost || y.totalTokens - x.totalTokens);
+}
+
+function mergeUsageAggregates(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const hoursByKey = new Map();
+  for (const hour of [...(a.hours || []), ...(b.hours || [])]) {
+    const key = Number(hour.hour);
+    const previous = hoursByKey.get(key);
+    if (!previous) hoursByKey.set(key, { ...hour });
+    else {
+      const merged = { ...previous };
+      for (const field of ['cost', 'runs', 'searchCount', 'promptTokens', 'completionTokens', 'cachedTokens', 'totalTokens']) {
+        merged[field] = (Number(previous[field]) || 0) + (Number(hour[field]) || 0);
+      }
+      merged.cacheHitRate = merged.promptTokens ? Math.min(1, merged.cachedTokens / merged.promptTokens) : 0;
+      hoursByKey.set(key, merged);
+    }
+  }
+  const toolCounts = { ...(a.toolCounts || {}) };
+  for (const [name, count] of Object.entries(b.toolCounts || {})) {
+    toolCounts[name] = (Number(toolCounts[name]) || 0) + (Number(count) || 0);
+  }
+  return {
+    totals: sumUsageTotals(a.totals, b.totals),
+    chats: mergeUsageGroups(a.chats, b.chats),
+    models: mergeUsageGroups(a.models, b.models),
+    searchCount: (Number(a.searchCount) || 0) + (Number(b.searchCount) || 0),
+    toolCounts,
+    hours: [...hoursByKey.values()].sort((x, y) => x.hour - y.hour)
+  };
+}
+
+function aggregateUsageCarryover(entry, liveSessionIds) {
+  let aggregate = null;
+  for (const [id, contribution] of Object.entries(entry?.sessions || {})) {
+    // A pre-delete snapshot may survive a partial filesystem failure. Count
+    // its still-present session file instead of its carryover copy.
+    if (liveSessionIds.has(id)) continue;
+    aggregate = mergeUsageAggregates(aggregate, contribution);
+  }
+  return aggregate;
 }
 
 /**
@@ -1388,7 +1484,7 @@ function completedDayKeys(fromTs) {
   // 每天还去 loadUsageDayFile 试读 —— 点「全部」卡死的主因。
   let startMs = Number(fromTs) || 0;
   if (!startMs) {
-    const keys = listUsageDayKeys();
+    const keys = [...listUsageDayKeys(), ...Object.keys(loadUsageCarryover())].sort();
     startMs = keys.length
       ? (new Date(keys[0] + 'T00:00:00')).getTime()
       : (Date.now() - 29 * 24 * 60 * 60 * 1000);
@@ -1472,6 +1568,51 @@ function aggregateDayFromArchive(archive, dayKey) {
 }
 
 /**
+ * Preserve the usage-only aggregates for sessions that clearFinished is about
+ * to delete. The callback runs synchronously before any session file is removed.
+ */
+function persistUsageBeforeSessionClear(sessionIds) {
+  if (!sessionIds?.length) return;
+  const dir = path.join(DATA_DIR, 'sessions');
+  const carryover = loadUsageCarryover();
+  const parsedById = new Map();
+  const dayKeys = new Set();
+  for (const id of sessionIds) {
+    const file = `${id}.json`;
+    const filePath = path.join(dir, file);
+    if (fs.existsSync(filePath)) JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const parsed = parseUsageSessionFile(dir, file);
+    parsedById.set(id, parsed);
+    for (const row of parsed.rows) dayKeys.add(dayKeyOf(row.at));
+    if (parsed.searchCount || Object.keys(parsed.toolCounts).length) {
+      const started = Number(parsed.started) || Number(parsed.mtime) || 0;
+      if (started) dayKeys.add(dayKeyOf(started));
+    }
+  }
+
+  const todayKey = dayKeyOf(Date.now());
+  let changed = false;
+  for (const dayKey of dayKeys) {
+    // A completed-day snapshot already protects its usage. Today is never
+    // snapshotted because new usage can still accrue.
+    if (dayKey !== todayKey && loadUsageDayFile(dayKey)) continue;
+    const entry = carryover[dayKey] || { sessions: {} };
+    entry.sessions ||= {};
+    for (const [id, parsed] of parsedById) {
+      if (entry.sessions[id]) continue;
+      const aggregates = aggregateDayFromArchive(new Map([[`${id}.json`, parsed]]), dayKey);
+      if (aggregates && !isEmptyDayAgg(aggregates)) entry.sessions[id] = aggregates;
+    }
+    if (!Object.keys(entry.sessions).length) continue;
+    carryover[dayKey] = entry;
+    changed = true;
+  }
+  if (changed && !saveUsageCarryover(carryover)) {
+    throw new Error('could not persist usage statistics before clearing sessions');
+  }
+}
+
+/**
  * 快照加速版统计：days 维度全部走快照 + 今天实时聚合。
  * 其余维度（chats/models/totals）= 各日快照聚合 + 今天实时。
  * 任一需要的日快照缺失/失效 → 重算该日并回写快照。
@@ -1488,12 +1629,23 @@ async function buildUsageStatsWithSnapshots({ range = '7' } = {}) {
 
   // 已完结日：直接读按天文件；缺失的才记入待回算
   const fromTs = win.mode === 'all' ? 0 : win.start;
+  const carryover = loadUsageCarryover();
+  const liveSessionIds = new Set(files.map((file) => file.slice(0, -5)));
+  let carryoverChanged = false;
   const wantedDays = completedDayKeys(fromTs);
   const dayAggs = [];   // { day, aggregates }
   const needDays = [];
   for (const dayKey of wantedDays) {
     const agg = loadUsageDayFile(dayKey);
-    if (agg && !isEmptyDayAgg(agg)) dayAggs.push({ day: dayKey, aggregates: agg });
+    if (agg && !isEmptyDayAgg(agg)) {
+      dayAggs.push({ day: dayKey, aggregates: agg });
+      // A snapshot written from carryover is authoritative if the process
+      // stopped before removing that day's carryover entry.
+      if (carryover[dayKey]) {
+        delete carryover[dayKey];
+        carryoverChanged = true;
+      }
+    }
     else if (!agg) needDays.push(dayKey);
   }
 
@@ -1505,9 +1657,15 @@ async function buildUsageStatsWithSnapshots({ range = '7' } = {}) {
     const minNeed = Math.min(...needDays.map((d) => new Date(d + 'T00:00:00').getTime()));
     archive = await collectArchiveForWindow(dir, files, minNeed);
     for (const dayKey of needDays) {
-      const agg = aggregateDayFromArchive(archive, dayKey);
+      const liveAgg = aggregateDayFromArchive(archive, dayKey);
+      const archivedAgg = aggregateUsageCarryover(carryover[dayKey], liveSessionIds);
+      const agg = mergeUsageAggregates(liveAgg, archivedAgg);
       if (!agg) continue;
-      saveUsageDayFile(dayKey, agg);   // 固化，下次点用量页不再扫
+      const saved = saveUsageDayFile(dayKey, agg);   // 固化，下次点用量页不再扫
+      if (saved && carryover[dayKey]) {
+        delete carryover[dayKey];
+        carryoverChanged = true;
+      }
       // 空日不进列表：30 天窗口会把「窗口起点→有数据那天」之间的空白日全枚举，
       // 全 0 的日子既不该占柱图也不该进按天表
       if (isEmptyDayAgg(agg)) continue;
@@ -1516,12 +1674,16 @@ async function buildUsageStatsWithSnapshots({ range = '7' } = {}) {
     }
     dayAggs.sort((a, b) => a.day.localeCompare(b.day));
   }
+  if (carryoverChanged) saveUsageCarryover(carryover);
 
   // 今天（窗口含今天才需要）：实时聚合，只解析今天 0 点后写过的文件
   let todayAgg = null;
   if (includesToday) {
     if (!archive) archive = await collectArchiveForWindow(dir, files, todayStart);
-    todayAgg = aggregateDayFromArchive(archive, todayKey);
+    todayAgg = mergeUsageAggregates(
+      aggregateDayFromArchive(archive, todayKey),
+      aggregateUsageCarryover(carryover[todayKey], liveSessionIds)
+    );
   }
 
   // days 行带 searchCount：搜索是会话级计数，原先只在聚合顶层 → 柱图恒 0
@@ -1750,7 +1912,7 @@ async function buildUsageStats({ range = '7' } = {}) {
  * 明细弹窗走按天文件：dim=day 读该日文件；dim=chat/model 跨日取同 key 分组。
  * 对不上（缺文件）返回 null，回落全量扫。
  */
-function tryBreakdownFromDayFiles({ range, dim, key, by }) {
+async function tryBreakdownFromDayFiles({ range, dim, key, by }) {
   if (!dim) return null;
   // 日文件只有「按会话」「按模型」两份平行聚合，没有 chat×model 交叉表。
   // 交叉下钻（会话→各模型 / 模型→各群聊）必须回落全量扫 ——
@@ -1758,11 +1920,37 @@ function tryBreakdownFromDayFiles({ range, dim, key, by }) {
   if ((dim === 'chat' && by === 'model') || (dim === 'model' && by === 'chat')) return null;
   const win = resolveRange(range);
   const fromTs = win.mode === 'all' ? 0 : win.start;
+  const todayKey = dayKeyOf(Date.now());
+  const todayStart = new Date(todayKey + 'T00:00:00').getTime();
+  const includesToday = win.end >= todayStart;
   const wantedDays = completedDayKeys(fromTs);
   const aggs = [];
+  const addDayAgg = (day, aggregates) => {
+    const existing = aggs.find((item) => item.day === day);
+    if (existing) existing.aggregates = mergeUsageAggregates(existing.aggregates, aggregates);
+    else aggs.push({ day, aggregates });
+  };
+  const carryover = loadUsageCarryover();
+  const dir = path.join(DATA_DIR, 'sessions');
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((file) => file.endsWith('.json')); } catch { /* empty sessions directory */ }
+  const liveSessionIds = new Set(files.map((file) => file.slice(0, -5)));
   for (const dayKey of wantedDays) {
     const agg = loadUsageDayFile(dayKey);
-    if (agg) aggs.push({ day: dayKey, aggregates: agg });
+    if (agg) addDayAgg(dayKey, agg);
+    else {
+      const archivedAgg = aggregateUsageCarryover(carryover[dayKey], liveSessionIds);
+      if (archivedAgg) addDayAgg(dayKey, archivedAgg);
+    }
+  }
+  if (includesToday) {
+    const todayCarryover = aggregateUsageCarryover(carryover[todayKey], liveSessionIds);
+    if (todayCarryover) addDayAgg(todayKey, todayCarryover);
+    // Today's live sessions have no day snapshot yet; include them beside any
+    // cleared-session carryover so detail totals match the main statistics.
+    const liveArchive = await collectArchiveForWindow(dir, files, todayStart);
+    const liveToday = aggregateDayFromArchive(liveArchive, todayKey);
+    if (liveToday) addDayAgg(todayKey, liveToday);
   }
   if (!aggs.length) return null;
   const emptyTotals = () => ({
@@ -1822,7 +2010,7 @@ function tryBreakdownFromDayFiles({ range, dim, key, by }) {
 
 async function buildUsageBreakdown({ range = '7', dim = '', key = '', by = '' } = {}) {
   // 能走按天文件就走：避免每次点明细行都全量扫 sessions/
-  const dayFileHit = tryBreakdownFromDayFiles({ range, dim, key, by });
+  const dayFileHit = await tryBreakdownFromDayFiles({ range, dim, key, by });
   if (dayFileHit) return dayFileHit;
   const { rows, win } = await collectUsageRows({ range });
   for (const r of rows) r.dayKey = dayKeyOf(r.at);
@@ -1865,6 +2053,9 @@ export function __testUsageDaily() {
     saveUsageDaily,
     completedDayKeys,
     aggregateDayFromArchive,
-    USAGE_DAILY_FILE
+    persistUsageBeforeSessionClear,
+    loadUsageCarryover,
+    USAGE_DAILY_FILE,
+    USAGE_CARRYOVER_FILE
   };
 }
