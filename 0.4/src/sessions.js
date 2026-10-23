@@ -398,11 +398,12 @@ export class SessionRegistry {
    * remove 是用户主动清理历史，允许删任何状态，但**不删正在运行的**（那会丢账）。
    * @returns {boolean} 是否真的删了
    */
-  remove(id) {
+  remove(id, beforeDelete = null) {
     if (!id) return false;
     const s = this.current.get(id);
     // 正在运行的会话不能删（usage 还在累加，删了账就乱了）；等待中的可以
     if (s && s.status === 'running') return false;
+    if (beforeDelete) beforeDelete([id]);
     this.current.delete(id);
     const before = this.index.length;
     this.index = this.index.filter((e) => e.id !== id);
@@ -418,11 +419,15 @@ export class SessionRegistry {
    * 清空全部已结束的会话记录（保留正在运行/等待的）。
    * @returns {number} 删掉了多少条
    */
-  clearFinished() {
+  clearFinished(beforeDelete = null) {
     const keepIds = new Set();
     for (const [id, s] of this.current) {
       if (s && (s.status === 'running' || s.status === 'waiting')) keepIds.add(id);
     }
+    const removeEntries = this.index.filter((e) => !keepIds.has(e.id));
+    // Persist usage before deleting any session files. If the callback fails,
+    // the session index and files are left untouched for a safe retry.
+    if (beforeDelete && removeEntries.length) beforeDelete(removeEntries.map((e) => e.id));
     let removed = 0;
     const remaining = [];
     for (const e of this.index) {

@@ -123,6 +123,31 @@ await check('删除快照文件 → 自动重建且数据不变', async () => {
   assert.equal(r.stats.totals.promptTokens, 4200, `重建后总量 4200，实际 ${r.stats.totals.promptTokens}`);
 });
 
+await check('清除未固化的历史会话后仍保留用量并补写日快照', async () => {
+  fs.rmSync(snapshotFile, { force: true });
+  T.persistUsageBeforeSessionClear(['s-old3']);
+  fs.rmSync(path.join(sessionsDir, 's-old3.json'));
+  const r = await T.buildUsageStatsWithSnapshots({ range: '7' });
+  const yDay = r.stats.days.find((d) => d.day === yesterdayKey);
+  assert.equal(yDay.promptTokens, 3700, `历史 prompt 应仍为 3700，实际 ${yDay?.promptTokens}`);
+  assert.ok(fs.existsSync(snapshotFile), '历史日快照应重新生成');
+  assert.ok(!fs.existsSync(T.USAGE_CARRYOVER_FILE), '历史 carryover 写入日快照后应清理');
+});
+
+await check('清除今日会话后保留旧用量，且新会话可继续累加', async () => {
+  mkSession('s-clear-today', now - 300_000, 800);
+  T.persistUsageBeforeSessionClear(['s-clear-today']);
+  fs.rmSync(path.join(sessionsDir, 's-clear-today.json'));
+  const afterClear = await T.buildUsageStatsWithSnapshots({ range: 'today' });
+  assert.equal(afterClear.stats.totals.promptTokens, 1300, '今日应包含原 500 + 已清除会话 800');
+
+  mkSession('s-after-clear', now - 120_000, 300);
+  const afterNewSession = await T.buildUsageStatsWithSnapshots({ range: 'today' });
+  assert.equal(afterNewSession.stats.totals.promptTokens, 1600, '清除後的新用量應與 carryover 相加');
+  const detail = await T.buildUsageBreakdown({ range: 'today', dim: 'day', key: todayKey, by: 'model' });
+  assert.equal(detail.totals.promptTokens, 1600, '今日明細應與主統計一樣包含 carryover 和現存會話');
+});
+
 fs.rmSync(dataDir, { recursive: true, force: true });
 console.log(`\n按日快照：通过 ${pass}，失败 ${fail}`);
 if (fail) process.exit(1);
