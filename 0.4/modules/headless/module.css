@@ -1,0 +1,11 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; padding: 24px; }
+main { max-width: 640px; margin: 32px auto; }
+h1 { font-size: 1.8rem; margin-bottom: 12px; }
+label { display: block; margin: 18px 0 6px; }
+input:not([type=checkbox]), select, button { box-sizing: border-box; width: 100%; padding: 12px; font: inherit; border: 1px solid #8888; border-radius: 6px; }
+button { margin-top: 24px; cursor: pointer; }
+fieldset { margin: 24px 0; padding: 16px; border: 1px solid #8888; border-radius: 8px; }
+[hidden] { display: none; }
+[role=status] { white-space: pre-wrap; overflow-wrap: anywhere; }
+a { color: inherit; }

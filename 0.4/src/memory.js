@@ -11,7 +11,7 @@ import { DATA_DIR, getConfig, updateConfig } from './config.js';
 const MEMORY_DIR = path.join(DATA_DIR, 'memory');
 
 function chatDirName(chatKey) {
-  return String(chatKey).replace(/[^a-z0-9_]/gi, '_');
+  return String(chatKey).replace(/[^a-z0-9_-]/gi, '_');
 }
 
 function legacyFile(chatKey) {
@@ -29,7 +29,7 @@ function metaFile(chatKey) {
 function memberFileName(userId, name = '') {
   if (String(userId ?? '').trim()) {
     const id = String(userId).trim();
-    return /^\d+$/.test(id) ? `${id}.json` : `u_${id.replace(/[^a-z0-9_]/gi, '_')}.json`;
+    return /^\d+$/.test(id) ? `${id}.json` : `u_${id.replace(/[^a-z0-9_-]/gi, '_')}.json`;
   }
   const safe = String(name || 'unknown').trim().replace(/[^a-z0-9_\u4e00-\u9fa5]/gi, '_').slice(0, 40);
   return `_n_${safe || 'unknown'}.json`;
@@ -85,10 +85,10 @@ export class MemoryStore {
     try {
       for (const f of fs.readdirSync(MEMORY_DIR)) {
         if (fs.statSync(path.join(MEMORY_DIR, f)).isDirectory()) {
-          const m = /^(group|private)_(\d+)$/.exec(f);
+          const m = /^(group|private)_([A-Za-z0-9_-]+)$/.exec(f);
           if (m) out.add(`${m[1]}:${m[2]}`);
         } else {
-          const m = /^(group|private)_(\d+)\.json$/.exec(f);
+          const m = /^(group|private)_([A-Za-z0-9_-]+)\.json$/.exec(f);
           if (m) out.add(`${m[1]}:${m[2]}`);
         }
       }
@@ -280,7 +280,7 @@ export class MemoryStore {
   /** 编辑群友印象（管理端）：QQ 号由调用方提供，自动回填名字，保存备注到配置。 */
   editMemberImpression(chatKey, { userId, name = '', note = '', impressions = [] }) {
     const uid = String(userId ?? '').trim();
-    if (!/^\d{1,15}$/.test(uid)) throw new Error('userId 必须是数字 QQ 号');
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new Error('userId 必须是 QQ 号或 OpenID');
     const map = this.#ensureChat(chatKey);
     const old = map.get(uid) || loadMember(chatKey, uid, name);
     const finalName = String(name ?? '').trim().slice(0, 60) || String(old.name || '').trim() || uid;
@@ -320,7 +320,7 @@ export class MemoryStore {
   /** 手动替换某成员的全部印象（管理端编辑用）。返回更新后的成员。 */
   replaceMember(chatKey, userId, name, contents) {
     const uid = String(userId ?? '').trim();
-    if (!/^\d{1,15}$/.test(uid)) throw new Error('userId 必须是数字 QQ 号');
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new Error('userId 必须是 QQ 号或 OpenID');
     const map = this.#ensureChat(chatKey);
     const old = map.get(uid) || loadMember(chatKey, uid, name);
     const finalName = String(name ?? '').trim().slice(0, 60) || String(old.name || '').trim() || uid;
@@ -362,7 +362,7 @@ export class MemoryStore {
   /** 删除某成员的印象文件。 */
   removeMember(chatKey, userId) {
     const uid = String(userId ?? '').trim();
-    if (!/^\d{1,15}$/.test(uid)) return false;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return false;
     const map = this.#ensureChat(chatKey);
     const m = map.get(uid) || loadMember(chatKey, uid);
     map.delete(uid);

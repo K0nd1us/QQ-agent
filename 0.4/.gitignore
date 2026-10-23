@@ -49,3 +49,9 @@ release/
 community.key
 
 .goal-baseline/
+
+# Headless module: private environments and additional data profiles
+node_modules
+data-*/
+.env.*
+!modules/headless/.env.example

@@ -91,6 +91,9 @@ plugins/my-plugin/            skills/my-skill/
   等价于"任意落地的 JS 会被执行"，共享机器建议关掉）。
 - 架构总览见 [doc/extend_development/skill-system.md](doc/extend_development/skill-system.md)。
 ## 安装与使用
+
+Linux / Docker 可选运行模块（独立于桌面启动）：[中文说明](modules/headless/README.md) · [English guide](modules/headless/README.en.md)。使用 `npm run server:headless`，或模块提供的 Docker Compose；原有安装与启动方式继续保留。
+
 **三步搞定**（推荐）：
 ```bash
 git clone https://github.com/K0nd1us/QQ-agent.git

@@ -1014,6 +1014,8 @@ function renderDesktopSection(c) {
 }
 
 function renderOnebotSection(c) {
+  const runtimePath = state.status?.runtime?.connectionSettingsPath;
+  if (runtimePath) return `<h3 id="settings-onebot">协议连接</h3><a class="btn" href="${esc(runtimePath)}">配置协议连接 / Connection settings</a>`;
   return `
     <h3 id="settings-onebot">OneBot（SnowLuma）</h3>
     <div class="hint" style="margin-bottom:10px">SnowLuma 的启动、关闭与日志已移动到顶部「SnowLuma」页签。此处只保留连接配置。</div>

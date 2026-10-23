@@ -222,7 +222,7 @@ function registerAllTools() {
           return err('跨会话发送未开启（管理员可在 设置 → 工具与技能 里打开）。');
         }
         const wantTarget = String(args.targetChatKey ?? '').trim();
-        if (!/^(group|private):\d+$/.test(wantTarget)) {
+        if (!/^(group|private):[A-Za-z0-9_-]+$/.test(wantTarget)) {
           return err('targetChatKey 格式应为 group:群号 或 private:QQ号');
         }
         if (wantTarget === ctx.chatKey) {
@@ -663,8 +663,8 @@ function registerAllTools() {
     },
     async execute(ctx, args) {
       const userId = String(args.userId ?? '').trim();
-      if (!/^\d{1,15}$/.test(userId)) {
-        return err(`userId 必须是数字 QQ 号（收到：${JSON.stringify(args.userId)}）。先用 get_active_members 查准确 QQ 号再记。`);
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(userId)) {
+        return err(`userId 必须是 QQ 号或 OpenID（收到：${JSON.stringify(args.userId)}）。先用 get_active_members 查准确 QQ 号再记。`);
       }
       const entry = ctx.memory.append(ctx.chatKey, 'memberImpression', String(args.content ?? ''), {
         userId,

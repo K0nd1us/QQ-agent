@@ -1,0 +1,16 @@
+node_modules
+data
+data-*
+runtime
+snowluma
+.env
+.env.*
+**/.env
+**/.env.*
+community.key
+*.log
+dist
+release
+test/*
+!test/headless-transport.test.mjs
+!test/headless-runtime.test.mjs
