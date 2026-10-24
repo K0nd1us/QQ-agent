@@ -74,6 +74,7 @@
     <button class="tab" data-tab="usage">用量</button>
     <button class="tab" data-tab="skills">技能</button>
     <button class="tab" data-tab="plugins">插件</button>
+    <button class="tab" data-tab="storage">冷储存</button>
     <button class="tab" data-tab="settings">设置</button>
     <!-- 社区功能（右侧）：金句上传 / 意见收集。金句勾选模式下「确认金句」出现在最左 -->
     <span class="nav-spacer"></span>
@@ -141,6 +142,11 @@
       <div id="plugins-page" class="usage-pane"></div>
     </section>
 
+    <!-- 冷储存视图：清空/删除/重置之前自动落快照，这里看历史、按关键词翻旧账、还原记忆 -->
+    <section id="view-storage" class="view">
+      <div id="storage-page" class="usage-pane"></div>
+    </section>
+
     <!-- 设置视图 -->
     <section id="view-settings" class="view">
       <aside id="settings-sidebar" class="settings-sidebar"></aside>
@@ -162,6 +168,7 @@
   <script defer src="/app/09-community.js"></script>
   <script defer src="/app/10-feedback.js"></script>
   <script defer src="/app/12-concept2-ui.js"></script>
+  <script defer src="/app/13-cold-storage.js"></script>
   <script defer src="/app/11-init.js"></script>
 
   <!-- 阿里云验证码 2.0（意见收集/金句上传共用）：容器常驻；AliyunCaptchaConfig 与

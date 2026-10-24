@@ -25,7 +25,7 @@ export const APP_PARTS = [
   '00-core.js', '01-boot.js', '02-sse-sessions.js',
   '04-archive-usage.js', '05-memory-settings.js', '06-settings-render.js',
   '07-settings-events.js', '08-modals.js', '09-community.js',
-  '10-feedback.js', '11-init.js'
+  '10-feedback.js', '13-cold-storage.js', '11-init.js'
 ];
 
 /** 读单段。 */

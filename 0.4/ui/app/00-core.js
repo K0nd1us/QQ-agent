@@ -795,6 +795,7 @@ function switchTab(name) {
     api('/api/chats').then((d) => { state.chats = d.chats || []; }).catch(() => {});
   }
   if (name === 'memory') loadMemoryView();
+  if (name === 'storage') loadColdStorageView();
   if (name === 'usage') loadUsageView({ force: true });
   if (name === 'skills') loadModulePage('skill');
   if (name === 'plugins') loadModulePage('plugin');

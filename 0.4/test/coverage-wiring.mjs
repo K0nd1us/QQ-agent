@@ -158,7 +158,7 @@ cov['首屏'] = scan('首屏');
 // ⚠️ 这份列表必须与 index.html 里的 .tab 保持一致 —— 漏掉一个页签，
 // 那一页的按钮就永远不会被接线检查覆盖（skills/plugins 曾经就是这样被漏掉的）。
 const visitedTabs = [];
-for (const t of ['sessions', 'chats', 'memory', 'usage', 'skills', 'plugins', 'settings']) {
+for (const t of ['sessions', 'chats', 'memory', 'usage', 'skills', 'plugins', 'storage', 'settings']) {
   const tabBtn = window.document.querySelector(`.tab[data-tab="${t}"]`);
   if (tabBtn) tabBtn.click(); else { try { window.switchTab(t); } catch { /* ignore */ } }
   await sleep(800);

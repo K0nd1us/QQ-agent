@@ -51,6 +51,43 @@
 - **记忆**：每个群友一份档案，可编辑、删除、单独更新
 - **用量**：三维度统计 + 下钻明细 + 调用次数明细（内置 28 种工具按类别分组的趣味统计，启用 Skill 后还会更多）
 - **设置**：以上所有
+## 长期冷储存（快照 / 检索 / 还原）
+
+控制台里这几个按钮是**真删**：清空某会话、删除选中消息、删除本会话记忆、删除某个群友的记忆、
+清理已结束会话、重置数据目录。删完之后「它上次记得我什么、我们聊到哪了」就没有了 —— 没有任何
+地方能找回。冷储存在这之上加了一层保险：
+
+| 时机 | 行为 |
+| --- | --- |
+| 上面这些删除动作执行**之前** | 自动打一份快照到数据目录**隔壁**的 `cold-storage/`（`重置数据目录` 也删不到它） |
+| 事后想翻旧账 | 用关键词检索历史快照里的记忆、消息、会话留档 |
+| 想让它重新记起来 | `restore` 把群友印象并回 `memory/`（只补缺的，重复执行幂等） |
+
+```bash
+npm run cold:status                          # 有多少份、占多大、应用是否在跑
+npm run cold:snapshot -- --reason 手动        # 手动打一份
+npm run cold:search -- 阿伟 迟到               # 多个词是 AND 语义
+npm run cold:list
+npm run cold:restore -- latest               # 默认只并回记忆
+npm run cold:restore -- latest --mode state  # messages/ + memory/ + sessions/ 整套覆盖
+npm run cold:prune -- --keep 50
+```
+
+口径：
+
+- 归档里的配置是**脱敏副本**（`apiKey` 等一律替换成 `__REDACTED__`），绝不落明文密钥；
+- 每份快照含 `memory.json`（群友印象的人读摘要）与 `manifest.json`（文件清单 + sha256 + 体积）；
+- 还原前会先打一份 `pre-restore` 快照；`restore latest` 会自动跳过它，不会「还原上一次还原」；
+- 还原要求应用**已退出**：内存态会回写磁盘，运行中还原等于白做（`--force` 可强行跳过，慎用）；
+- 单文件超过 16 MB 跳过并在 manifest 里记一笔；默认保留最近 100 份；
+- 检索默认跨全部快照；`--chat group:123` 可限定到单个会话自己的消息/记忆/留档。
+
+接口：`GET /api/cold-storage/{status,list,search}`、`POST /api/cold-storage/{snapshot,restore,prune}`。
+实现：`src/cold-storage.js`；命令行 `scripts/cold-storage.mjs`；回归 `test/cold-storage-test.mjs`。
+
+控制台里有独立的**「冷储存」页签**：看快照清单、按关键词翻旧账、选中一份点「还原记忆」或
+「整套覆盖」。删除类操作存档后，这一页会通过 SSE（`cold-storage-update`）自动刷新。
+
 ## 扩展（两型：插件 / Skill）
 
 扩展分**两型**，按"什么时候该运行"来选，放进对应目录即生效：
