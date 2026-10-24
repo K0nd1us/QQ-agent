@@ -62,6 +62,11 @@ export function listen(server) {
 export function makeDataDir(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   process.env.QQ_AGENT_DATA_DIR = dir;
+  // 扩展目录同样隔离到临时目录（同 test/selftest.mjs 的说明）：项目里装的
+  // plugins/ 会改变轮次与工具集，脚本化 mock 的用例会互相污染。
+  const ext = path.join(dir, 'extensions');
+  fs.mkdirSync(ext, { recursive: true });
+  process.env.QQ_AGENT_EXTENSIONS_DIR = ext;
   return dir;
 }
 

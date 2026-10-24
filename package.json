@@ -12,6 +12,7 @@
     "files": [
       "**/*",
       "!data/**",
+      "!runtime/**",
       "!community.key",
       "!community.key.example",
       "!server/**",

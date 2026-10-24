@@ -215,6 +215,13 @@ function pass(name, extra = '') {
 async function main() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-agent-test-'));
   process.env.QQ_AGENT_DATA_DIR = dataDir;
+  // 扩展目录也隔离到临时目录：本审计只测**核心**行为，而项目里装的
+  // plugins/（如 reply-safety 把正文成稿抢救成发送）会改变会话轮次，
+  // 让脚本化的 mock LLM 队列错位到后续场景。插件自身行为由
+  // test/reply-safety-test.mjs 单独覆盖。
+  const extDir = path.join(dataDir, 'extensions');
+  fs.mkdirSync(extDir, { recursive: true });
+  process.env.QQ_AGENT_EXTENSIONS_DIR = extDir;
 
   const onebotHttp = createMockOneBotHttp();
   PORTS.onebotHttp = await listen(onebotHttp.server);
