@@ -1,6 +1,0 @@
-.console-token-dialog{width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;box-sizing:border-box}
-.console-token-dialog .console-token-row{display:flex;gap:var(--sp-2);align-items:center;margin:var(--sp-4) 0}
-.console-token-dialog input{min-width:0;flex:1;width:100%;box-sizing:border-box}
-.console-token-dialog p{overflow-wrap:anywhere;color:var(--muted);font-size:12px;line-height:1.7}
-.console-token-dialog #console-token-status{min-height:1.5em}
-@media(max-width:640px){.console-token-dialog .console-token-row{flex-wrap:wrap}.console-token-dialog .console-token-row input{flex-basis:100%}}

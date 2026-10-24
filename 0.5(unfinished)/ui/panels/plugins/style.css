@@ -1,3 +1,0 @@
-@import url('../skills/style.css');
-/* Plugin catalogue retains the same module grammar as the skill catalogue. */
-body[data-panel="plugins"] #list .list-item::before { content: "EXTENSION / " counter(extension-number, decimal-leading-zero); }

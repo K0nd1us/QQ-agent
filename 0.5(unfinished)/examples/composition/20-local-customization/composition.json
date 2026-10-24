@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "id": "local-customization",
-  "order": 20,
-  "components": {
-    "core.prompt.system": { "module": "./implementation.mjs", "export": "systemPrompt" }
-  },
-  "routes": [{ "id": "local-info", "module": "./implementation.mjs", "export": "registerRoutes" }]
-}

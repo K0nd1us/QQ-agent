@@ -1,1 +1,0 @@
-export function escapeText(value){const d=document.createElement('div');d.textContent=String(value??'');return d.textContent;} export function formatTime(ts){const d=new Date(ts);return Number.isNaN(d.getTime())?'—':d.toLocaleString();} export function formatMoney(value){return Number.isFinite(Number(value))?Number(value).toFixed(4):'—';}

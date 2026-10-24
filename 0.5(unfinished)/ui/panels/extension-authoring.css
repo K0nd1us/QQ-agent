@@ -1,8 +1,0 @@
-dialog.authoring-guide { width:min(820px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; }
-.authoring-guide > p { color:var(--muted); font-size:12px; line-height:1.7; }
-.authoring-guide .settings-fields { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
-.authoring-guide .setting-field { display:grid; min-width:0; gap:6px; }
-.authoring-guide textarea { width:100%; box-sizing:border-box; }
-.authoring-guide .authoring-prompt { min-height:240px; font-family:var(--font-mono); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
-.authoring-guide > .actions { display:flex; flex-wrap:wrap; gap:8px; }
-@media(max-width:600px) { .authoring-guide .authoring-prompt { min-height:180px; } }

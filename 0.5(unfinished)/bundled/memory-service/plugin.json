@@ -1,5 +1,0 @@
-{
-  "id": "memory-service", "name": "默认记忆整理", "version": "0.5.0", "kind": "plugin", "apiVersion": 1,
-  "permissions": ["net.outbound"], "enabledByDefault": true,
-  "hostConfig": ["memory", "memberNotes", "api", "providers", "globalBlocklist", "communityExemptions", "blocklist"], "entry": "index.js"
-}
