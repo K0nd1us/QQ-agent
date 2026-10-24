@@ -1,1 +1,0 @@
-export class StateStore { constructor(initial={}){this.state={...initial};this.listeners=new Set();} set(patch){this.state={...this.state,...patch};for(const fn of this.listeners) fn(this.get());} get(){return structuredClone(this.state);} subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn);} }

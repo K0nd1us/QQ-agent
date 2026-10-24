@@ -1,0 +1,135 @@
+{
+  "name": "qq-agent",
+  "version": "0.4.0",
+  "private": false,
+  "description": "QQ 群 AI 机器人（桌面版）：事件驱动的无状态 Agent，接 OpenAI 兼容 API，带会话式控制台。",
+  "type": "module",
+  "main": "electron/main.js",
+  "build": {
+    "appId": "cn.kondius.qq-agent",
+    "productName": "QQ Agent",
+    "asar": false,
+    "files": [
+      "**/*",
+      "!data/**",
+      "!runtime/**",
+      "!community.key",
+      "!community.key.example",
+      "!server/**",
+      "!snowluma/config/**",
+      "!snowluma/data/**",
+      "!snowluma/logs/**",
+      "!test/**",
+      "!doc/**",
+      "!scripts/**",
+      "!dist/**",
+      "!**/*.map",
+      "!package-lock.json.bak",
+      "!*.log",
+      "scripts/setup-macos.mjs",
+      "scripts/uninstall-macos.mjs"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "QQ-Agent-V0.4-Preview-Setup.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "QQ Agent",
+      "include": "build/installer.nsh"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.social-networking",
+      "artifactName": "QQ-Agent-${version}-${arch}.${ext}",
+      "identity": null
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "server": "node src/server.js",
+    "setup": "node scripts/setup.mjs",
+    "setup:check": "node scripts/setup.mjs --check",
+    "setup:napcat": "node scripts/setup-napcat.mjs",
+    "test": "node test/selftest.mjs && node test/community-test.mjs && node test/skill-test.mjs && node test/onebot-whitelist-test.mjs && node test/sticker-collect-test.mjs && node test/message-id-test.mjs && node test/tools-skill-audit.mjs && node test/sticker-context.mjs && node test/skill-modal-ui.mjs && node test/render-test.mjs && node test/scroll-test.mjs && node test/usage-e2e.mjs && node test/usage-daily-test.mjs && node test/test-prompt.mjs && node test/prompt-anchor-test.mjs && node test/wake-semantics-test.mjs && node test/setup-qq-version.mjs && node test/setup-download.mjs && node test/qq-pack.mjs && node test/qq-process-detect.mjs && node test/sender-file-uri-test.mjs && node test/sender-send-path-test.mjs && node test/vendor-mirror-test.mjs && node test/safe-fetch-file-test.mjs && node test/market-zip-test.mjs && node test/web-search-parse.mjs && node test/reply-safety-test.mjs",
+    "test:whitelist": "node test/onebot-whitelist-test.mjs",
+    "test:sticker": "node test/sticker-collect-test.mjs",
+    "test:msgid": "node test/message-id-test.mjs",
+    "test:coverage": "node test/coverage-offline.mjs && node test/coverage-http.mjs && node test/coverage-e2e.mjs && node test/coverage-ui.mjs && node test/coverage-wiring.mjs",
+    "test:all": "npm test && npm run test:coverage",
+    "test:prompt": "node test/test-prompt.mjs && node test/prompt-anchor-test.mjs",
+    "test:reply-safety": "node test/reply-safety-test.mjs",
+    "test:render": "node test/render-test.mjs",
+    "test:scroll": "node test/scroll-test.mjs",
+    "test:usage": "node test/usage-e2e.mjs",
+    "test:skill": "node test/skill-test.mjs",
+    "new:skill": "node scripts/new-skill.mjs",
+    "test:wiring": "node test/coverage-wiring.mjs",
+    "test:audit": "node test/tools-skill-audit.mjs",
+    "check:protocol": "node scripts/protocol-check.mjs",
+    "check:judge": "node scripts/judge-check.mjs",
+    "test:setuppin": "node test/setup-qq-version.mjs",
+    "test:download": "node test/setup-download.mjs",
+    "pack:qq": "node scripts/pack-qq-portable.mjs",
+    "test:qqpack": "node test/qq-pack.mjs",
+    "test:qqproc": "node test/qq-process-detect.mjs",
+    "test:safefile": "node test/safe-fetch-file-test.mjs",
+    "test:sender": "node test/sender-file-uri-test.mjs && node test/sender-send-path-test.mjs",
+    "check:load": "node scripts/preload-check.mjs",
+    "test:wakesem": "node test/wake-semantics-test.mjs",
+    "start:macos": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "setup:macos": "node scripts/setup-macos.mjs",
+    "check:macos": "node scripts/setup-macos.mjs --check",
+    "uninstall:macos": "node scripts/uninstall-macos.mjs",
+    "build:mac": "electron-builder --mac"
+  },
+  "dependencies": {
+    "js-yaml": "^5.4.1",
+    "undici": "^6.28.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3",
+    "jsdom": "^30.0.1"
+  },
+  "license": "MIT",
+  "author": "Kondius",
+  "keywords": [
+    "qq",
+    "bot",
+    "agent",
+    "openai",
+    "onebot",
+    "llm",
+    "desktop",
+    "electron"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/C4LLM3Kai/QQ-agent.git",
+    "directory": "."
+  },
+  "bugs": {
+    "url": "https://github.com/C4LLM3Kai/QQ-agent/issues"
+  },
+  "homepage": "https://github.com/C4LLM3Kai/QQ-agent/tree/macos-0.4#readme"
+}

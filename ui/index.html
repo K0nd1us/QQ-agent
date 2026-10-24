@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QQ Agent</title>
+  <!-- 内容安全策略：控制台只应加载本机资源。
+       首屏主题预置脚本必须内联（否则会闪白），用它的 sha256 hash 精确放行 ——
+       不再用 'unsafe-inline'（页面多处 innerHTML 拼接，一旦任何一处被注入，
+       unsafe-inline 会让 onerror= 等内联代码直接执行，CSP 形同虚设）。
+       内联样式仍放行（style-src）：主题/布局大量使用内联 style 属性。
+       2026-09-26 例外：意见收集/金句上传引入阿里云验证码 2.0（防垃圾上传），
+       官方要求必须动态加载 o.alicdn.com 的 SDK 并直连 aliyuncs 验签域，
+       故 script-src / connect-src / frame-src / worker-src 增列对应来源，
+       其余仍锁死在 'self'。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-AusRctWgAU9T2N4jaRWpaSsObfjDZwj+sO1AcdUK5/s=' https://o.alicdn.com https://kondius.cn; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; media-src 'self' data: blob:; connect-src 'self' https://kondius.cn https://*.aliyuncs.com https://*.alicdn.com; frame-src https://*.aliyuncs.com https://*.alicdn.com https://kondius.cn; worker-src 'self' blob: https://*.alicdn.com https://kondius.cn; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <link rel="stylesheet" href="/style.css" />
+  <script>
+    /* 主题预置：在样式生效前就定好 data-theme，避免首屏闪白/闪黑。
+       只认 dark / light，非法值回退暗色。
+       这里只做"应用"，真正的切换逻辑与持久化在前端脚本。 */
+    (function () {
+      try {
+        var saved = localStorage.getItem('qqa-theme') || '';
+        var theme = (saved === 'light' || saved === 'dark') ? saved : 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">QQ Agent <span class="brand-sub"></span></div>
+    <div class="top-status">
+      <!-- 状态胶囊带：窄窗口下横向滚动（不折行、不裁切）；右侧控件固定可见 -->
+      <div class="top-chips">
+        <span id="onebot-dot" class="dot dot-off" title="OneBot 连接状态"></span>
+        <span id="onebot-label" class="muted">OneBot 未连接</span>
+        <span class="sep"></span>
+        <span id="model-label" class="muted">模型：-</span>
+        <span class="sep"></span>
+        <span id="usage-label" class="muted">今日：-</span>
+        <span class="sep"></span>
+        <span id="search-count-label" class="muted" title="今日联网搜索次数（web_search / web_fetch）">搜索：-</span>
+      </div>
+      <span class="sep"></span>
+      <!-- 就绪进度指示器：4 圆点 = QQ运行 / SnowLuma运行 / OneBot连接 / 配置完成 -->
+      <span id="readiness-dots" class="readiness-dots" title="就绪进度：点击跳转到对应设置">
+        <span class="rdot" data-target="snowluma" title="QQ 内核未运行"></span>
+        <span class="rdot" data-target="snowluma" title="SnowLuma 未运行"></span>
+        <span class="rdot" data-target="snowluma" title="OneBot 未连接"></span>
+        <span class="rdot" data-target="settings" title="配置未完成"></span>
+      </span>
+      <button id="theme-btn" class="icon-btn" title="切换主题（暗 ↔ 亮）" aria-label="切换主题"></button>
+      <button id="pause-btn" class="btn btn-small">暂停</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-card">
+      <div class="loading-title">QQ Agent 正在启动</div>
+      <div class="loading-sub" id="loading-status">正在启动 SnowLuma 与 OneBot 服务，请稍候…</div>
+      <div class="loading-spinner"></div>
+      <pre class="loading-logs" id="loading-logs"></pre>
+    </div>
+  </div>
+
+  <nav id="tabs">
+    <button class="tab active" data-tab="sessions">会话</button>
+    <button class="tab" data-tab="chats">存档</button>
+    <button class="tab" data-tab="memory">记忆</button>
+    <button class="tab" data-tab="usage">用量</button>
+    <button class="tab" data-tab="skills">技能</button>
+    <button class="tab" data-tab="plugins">插件</button>
+    <button class="tab" data-tab="snowluma">SnowLuma</button>
+    <button class="tab" data-tab="settings">设置</button>
+    <!-- 社区功能（右侧）：金句上传 / 意见收集。金句勾选模式下「确认金句」出现在最左 -->
+    <span class="nav-spacer"></span>
+    <button class="nav-btn hidden" id="quote-confirm-btn">确认金句</button>
+    <button class="nav-btn" id="quote-btn" title="把机器人的精彩发言收录到金句墙">金句上传</button>
+    <button class="nav-btn" id="feedback-btn" title="向作者反馈意见和建议">意见收集</button>
+    <button class="nav-btn nav-btn-market" id="skill-market-btn" title="打开 Skill 市场">Skill 市场</button>
+    <button class="nav-btn nav-btn-market" id="plugin-market-btn" title="打开插件市场">插件市场</button>
+    <button class="nav-btn nav-btn-persona" id="persona-plaza-btn" title="打开人设广场">人设广场</button>
+    <button class="nav-btn nav-btn-hot" id="open-site-btn" title="打开 QQ Agent 网站">打开网站！</button>
+  </nav>
+
+  <main id="layout">
+    <!-- 会话视图 -->
+    <section id="view-sessions" class="view active">
+      <aside id="session-list" class="list-pane">
+        <div class="list-head muted"><span id="session-count"></span><button class="list-head-btn" id="session-broadcast-btn" title="给选中的群/私聊批量发送一条消息">群发</button><button class="list-head-btn" id="session-clear-btn" title="清空全部已结束的会话记录（保留运行中/等待中的）">清空</button></div>
+        <div id="session-items"></div>
+        <div id="session-more" class="list-more muted"></div>
+        <div class="list-resizer" id="session-list-resizer" title="拖动调整侧栏宽度"></div>
+      </aside>
+      <div id="session-detail" class="detail-pane">
+        <div class="empty-hint">← 选择左侧会话查看完整过程</div>
+      </div>
+    </section>
+
+    <!-- 存档视图 -->
+    <section id="view-chats" class="view">
+      <aside id="chat-list" class="list-pane">
+        <div class="list-head muted">消息存档</div>
+        <div id="chat-items"></div>
+        <div class="list-resizer" id="chat-list-resizer" title="拖动调整侧栏宽度"></div>
+      </aside>
+      <div id="chat-detail" class="detail-pane">
+        <div class="empty-hint">← 选择会话查看消息存档</div>
+      </div>
+    </section>
+
+    <!-- SnowLuma 视图 -->
+    <section id="view-snowluma" class="view">
+      <div id="snowluma-page" class="snowluma-pane"></div>
+    </section>
+
+    <!-- 记忆视图 -->
+    <section id="view-memory" class="view">
+      <aside id="memory-list" class="list-pane">
+        <div class="list-head muted">记忆</div>
+        <div id="memory-items"></div>
+        <div class="list-resizer" id="memory-list-resizer" title="拖动调整侧栏宽度"></div>
+      </aside>
+      <div id="memory-detail" class="detail-pane">
+        <div class="empty-hint">← 选择会话查看记忆</div>
+      </div>
+    </section>
+
+    <!-- 用量视图 -->
+    <section id="view-usage" class="view">
+      <div id="usage-page" class="usage-pane"></div>
+    </section>
+
+    <!-- 技能视图：从设置页独立出来（原先和模型/聊天设置挤在一起，找不到） -->
+    <section id="view-skills" class="view">
+      <div id="skills-page" class="usage-pane"></div>
+    </section>
+
+    <!-- 插件视图：与技能并列的独立页签。
+         两型的区别在"谁决定何时执行"（确定性 vs 模型决定），是使用者最关心的一件事，
+         所以分成两页各自成组 —— 混在一页里既看不出类型，也数不清各有多少。 -->
+    <section id="view-plugins" class="view">
+      <div id="plugins-page" class="usage-pane"></div>
+    </section>
+
+    <!-- 设置视图 -->
+    <section id="view-settings" class="view">
+      <aside id="settings-sidebar" class="settings-sidebar"></aside>
+      <div id="settings-form" class="settings-pane"></div>
+    </section>
+  </main>
+
+  <!-- M9 拆分：ESM 桥（vendor 模块 → window）先执行；其后 12 段普通脚本按 defer 顺序执行，
+       module 与 defer 共享同一条按文档顺序的延迟队列，保证桥先于 00-core.js。 -->
+  <script type="module" src="/app.js"></script>
+  <script defer src="/app/00-core.js"></script>
+  <script defer src="/app/01-boot.js"></script>
+  <script defer src="/app/02-sse-sessions.js"></script>
+  <script defer src="/app/03-snowluma.js"></script>
+  <script defer src="/app/04-archive-usage.js"></script>
+  <script defer src="/app/05-memory-settings.js"></script>
+  <script defer src="/app/06-settings-render.js"></script>
+  <script defer src="/app/07-settings-events.js"></script>
+  <script defer src="/app/08-modals.js"></script>
+  <script defer src="/app/09-community.js"></script>
+  <script defer src="/app/10-feedback.js"></script>
+  <script defer src="/app/12-concept2-ui.js"></script>
+  <script defer src="/app/11-init.js"></script>
+
+  <!-- 阿里云验证码 2.0（意见收集/金句上传共用）：容器常驻；AliyunCaptchaConfig 与
+       SDK 动态加载都在 10-feedback.js 内（CSP 不放行无 hash 内联脚本）。 -->
+  <div id="captcha-element"></div>
+  <button id="captcha-trigger" type="button" aria-label="人机验证触发器（隐藏元素，SDK 内部使用）" style="position:fixed;left:-9999px;top:0" aria-hidden="true" tabindex="-1"></button>
+</body>
+</html>

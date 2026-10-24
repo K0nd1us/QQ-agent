@@ -1,5 +1,0 @@
-{
-  "id": "media-service", "name": "默认媒体处理", "version": "0.5.0", "kind": "plugin", "apiVersion": 1,
-  "permissions": ["net.outbound", "proc.exec"], "enabledByDefault": true,
-  "hostConfig": ["api", "security", "send", "sticker"], "entry": "index.js"
-}

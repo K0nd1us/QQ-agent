@@ -1,0 +1,38 @@
+{
+  "id": "reply-safety",
+  "name": "回复安全网",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "把模型写在正文里、却没通过 send_message 发出的成稿，按原句抢救成一条发送；拿不准时保持沉默。专治「思考完就不回复」。",
+  "author": "reply-safety",
+  "enabledByDefault": true,
+  "capabilities": [
+    "reply.is-planning-text",
+    "reply.loose-send",
+    "reply.grounded-select"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "dryRun": false,
+    "maxChars": 1500
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用回复安全网",
+      "description": "关掉后恢复原行为：正文永远不会被当成发言。"
+    },
+    "dryRun": {
+      "type": "boolean",
+      "label": "试运行（只记录、不发送）",
+      "description": "打开后只在日志里写「本来会抢救哪些话」，不会真的发到 QQ，适合先观察判定。"
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "单条最大字数",
+      "description": "超过这个长度的正文一律不抢救（多半是小作文/计划稿）。默认 1500。"
+    }
+  }
+}
