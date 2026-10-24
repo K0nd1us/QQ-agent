@@ -1049,6 +1049,8 @@ c.section('14. 长期冷储存（快照 / 检索 / 还原 / 轮转）');
     assert.equal(r.status, 200);
     assert.equal(r.data.ok, true);
     assert.ok(Array.isArray(r.data.hits), '应返回 hits 数组');
+    // 前端要显示「命中 N 条 · 来自 M 份快照」，缺 snapshots 会出现「来自 0 份快照」的自相矛盾文案
+    assert.equal(typeof r.data.snapshots, 'number', '应返回命中了几份快照（snapshots）');
 
     const bad = await hit('GET', '/api/cold-storage/search');
     assert.equal(bad.status, 400, '缺检索词应 400');

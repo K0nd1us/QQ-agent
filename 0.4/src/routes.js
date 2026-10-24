@@ -67,6 +67,22 @@ export function createRoutes(deps) {
   const bodyOf = (req) => readBody(req).catch((e) => { if (e?.expose) throw e; return {}; });
 
   /**
+   * 删除前的自动快照 + 通知前端。
+   *
+   * 为什么要包一层：`captureBeforeReset` 在 4 秒冷却窗口内会返回 null（去重），
+   * 只有真的打了快照才该发事件 —— 否则一次批量清理会连着推好几条，前端白刷。
+   * 事件只在冷储存页签时被前端消费，其它页签不发请求。
+   */
+  const captureAndNotify = (reason, opts) => {
+    const pending = captureBeforeReset(reason, opts);
+    if (!pending) return null;
+    Promise.resolve(pending)
+      .then((result) => { if (result?.id) emit('cold-storage-update', { action: 'auto', id: result.id, reason }); })
+      .catch(() => { /* 归档失败不影响删除本身 */ });
+    return pending;
+  };
+
+  /**
    * Skill 可用性判断的运行期上下文。
    * 必须和 orchestrator 用同一份输入，否则会出现
    * "设置页说可用、运行时空工具列表"的口径分裂。
@@ -149,7 +165,7 @@ export function createRoutes(deps) {
 
           // 全量重置会删掉整个 data/。它自己会留一份整目录 .backup-*，但那是不可检索的大坨副本；
           // 这里先给冷储存留一份能被关键词检索的快照。
-          captureBeforeReset('reset-data');
+          captureAndNotify('reset-data');
 
           await orchestrator.abortAll();
           onebot.close();
@@ -1072,7 +1088,7 @@ export function createRoutes(deps) {
       // 主动删除一条会话记录（正在运行的不能删）
       method: 'DELETE', pattern: /^\/api\/sessions\/([\w-]+)$/,
       handler: async ({ res, json, match }) => {
-        captureBeforeReset('delete-session');
+        captureAndNotify('delete-session');
         const removed = sessions.remove(match[1]);
         if (!removed) return json(res, 409, { ok: false, error: '会话不存在或正在运行（运行中的会话不能删除）' });
         emit('session-end', { sessionId: match[1], status: 'deleted' });
@@ -1084,7 +1100,7 @@ export function createRoutes(deps) {
       method: 'POST', pattern: '/api/sessions/clear-finished',
       handler: async ({ res, json }) => {
         // 会话留档是「那次对话的完整记录」，一口气清掉就没了：先落一份冷储存。
-        captureBeforeReset('clear-finished-sessions');
+        captureAndNotify('clear-finished-sessions');
         const removed = sessions.clearFinished();
         emit('session-end', { status: 'cleared', removed });
         return json(res, 200, { ok: true, removed });
@@ -1187,7 +1203,7 @@ export function createRoutes(deps) {
       method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)\/members\/(\d+)$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
-        captureBeforeReset('remove-member-memory', { chatKeys: [chatKey] });
+        captureAndNotify('remove-member-memory', { chatKeys: [chatKey] });
         memory.removeMember(chatKey, match[3]);
         emit('memory-update', { chatKey });
         return json(res, 200, { ok: true });
@@ -1198,7 +1214,7 @@ export function createRoutes(deps) {
       method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
-        captureBeforeReset('remove-chat-memory', { chatKeys: [chatKey] });
+        captureAndNotify('remove-chat-memory', { chatKeys: [chatKey] });
         memory.removeChat(chatKey);
         emit('memory-update', { chatKey });
         return json(res, 200, { ok: true });
@@ -1350,7 +1366,7 @@ export function createRoutes(deps) {
       method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/clear$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
-        captureBeforeReset('clear-chat', { chatKeys: [chatKey] });
+        captureAndNotify('clear-chat', { chatKeys: [chatKey] });
         const removed = store.clearChat(chatKey);
         emit('chat-update', chatKey);
         return json(res, 200, { ok: true, removed });
@@ -1374,7 +1390,7 @@ export function createRoutes(deps) {
         const body = await bodyOf(req);
         const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter((n) => Number.isFinite(n)) : [];
         if (!ids.length) return json(res, 400, { ok: false, error: '缺少要删除的消息 id 列表（ids）' });
-        captureBeforeReset('delete-messages', { chatKeys: [chatKey] });
+        captureAndNotify('delete-messages', { chatKeys: [chatKey] });
         const removed = store.removeByLocalIds(chatKey, ids);
         emit('chat-update', chatKey);
         return json(res, 200, { ok: true, removed });
@@ -1531,7 +1547,9 @@ export function createRoutes(deps) {
               });
             }
           }
-          return json(res, 200, { ok: true, q, chat: chat || null, total: result.total, hits });
+          // snapshots 是"命中了几份不同的快照"：前端要显示「命中 N 条 · 来自 M 份快照」，
+          // 少了这个字段界面就会出现「来自 0 份快照」这种自相矛盾的文案。
+          return json(res, 200, { ok: true, q, chat: chat || null, total: result.total, snapshots: result.results.length, hits });
         } catch (error) {
           return json(res, 500, { ok: false, error: `检索失败：${String(error?.message ?? error)}` });
         }
@@ -1543,6 +1561,7 @@ export function createRoutes(deps) {
         const body = await bodyOf(req);
         try {
           const result = await coldSnapshot({ reason: String(body.reason || 'manual'), note: String(body.note || '') });
+          emit('cold-storage-update', { action: 'snapshot', id: result.id });
           return json(res, 200, {
             ok: true, id: result.id, dir: result.dir,
             files: result.manifest.files.length, bytes: result.manifest.totalBytes
@@ -1562,6 +1581,7 @@ export function createRoutes(deps) {
             force: body.force === true
           });
           emit('memory-update', { chatKey: '' });
+          emit('cold-storage-update', { action: 'restore', id: report.snapshot });
           return json(res, 200, { ok: true, ...report });
         } catch (error) {
           return json(res, 400, { ok: false, error: String(error?.message ?? error) });
@@ -1573,7 +1593,9 @@ export function createRoutes(deps) {
       handler: async ({ req, res, json }) => {
         const body = await bodyOf(req);
         const keep = Math.max(1, Number(body.keep) || 100);
-        return json(res, 200, { ok: true, ...pruneArchives({ keep, dryRun: body.dryRun === true }) });
+        const result = pruneArchives({ keep, dryRun: body.dryRun === true });
+        if (result.removed?.length && body.dryRun !== true) emit('cold-storage-update', { action: 'prune', removed: result.removed.length });
+        return json(res, 200, { ok: true, ...result });
       }
     },
   ];

@@ -126,6 +126,11 @@ function connectSSE() {
   });
   es.addEventListener('onebot-status', () => refreshStatus());
   es.addEventListener('status', () => refreshStatus());
+  // 冷储存：自动快照是后端在删除动作里顺手打的，前端只有靠这个事件才知道「刚又多了一份」。
+  // 只在这一页时刷新，别的页签没必要发请求。
+  es.addEventListener('cold-storage-update', () => {
+    if (state.tab === 'storage') loadColdStorageView();
+  });
   es.addEventListener('feedback', (ev) => {
     let d = {};
     try { d = JSON.parse(ev.data); } catch { return; }

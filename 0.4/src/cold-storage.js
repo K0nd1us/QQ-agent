@@ -38,15 +38,21 @@ const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const LOCK_FILE = path.join(DATA_DIR, 'qq-agent.lock');
 
-// 冷储存跟着数据目录走，但它是**数据目录的兄弟**而不是子目录：
-//   多实例用 QQ_AGENT_PROFILE=2 时数据目录是 data-2/，冷储存就跟着叫 cold-storage-2/，
-//   这样两个实例的归档不会混在一起，而「重置数据目录」也删不到它。
+// 冷储存跟着数据目录走，但它是**数据目录的兄弟**而不是子目录 ——「重置数据目录」会把
+// data/ 整个删掉，归档要能活下来。命名从数据目录名派生，保证每个实例各有各的：
+//   data/          → cold-storage/
+//   data-2/        → cold-storage-2/        （多实例 PROFILE=2）
+//   <自定义目录>/  → <自定义目录>-cold-storage/
+// 为什么不用固定的 cold-storage/：QQ_AGENT_DATA_DIR 指到一个共用父目录时（测试、便携版），
+// 固定名会让两个互不相干的实例写进同一个归档目录。
 const dataBaseName = path.basename(DATA_DIR);
-const dataSuffix = dataBaseName.startsWith('data') ? dataBaseName.slice(4) : '';
+const coldDirName = dataBaseName.startsWith('data')
+  ? `cold-storage${dataBaseName.slice(4)}`
+  : `${dataBaseName}-cold-storage`;
 
 export const COLD_DIR = process.env.QQ_AGENT_COLD_STORAGE_DIR
   ? path.resolve(process.env.QQ_AGENT_COLD_STORAGE_DIR)
-  : path.join(path.dirname(DATA_DIR), `cold-storage${dataSuffix}`);
+  : path.join(path.dirname(DATA_DIR), coldDirName);
 
 /** 单文件复制上限：会话留档可能很大，超过就跳过而不是把归档撑爆。 */
 const MAX_COPY_BYTES = 16 * 1024 * 1024;

@@ -85,6 +85,9 @@ npm run cold:prune -- --keep 50
 接口：`GET /api/cold-storage/{status,list,search}`、`POST /api/cold-storage/{snapshot,restore,prune}`。
 实现：`src/cold-storage.js`；命令行 `scripts/cold-storage.mjs`；回归 `test/cold-storage-test.mjs`。
 
+控制台里有独立的**「冷储存」页签**：看快照清单、按关键词翻旧账、选中一份点「还原记忆」或
+「整套覆盖」。删除类操作存档后，这一页会通过 SSE（`cold-storage-update`）自动刷新。
+
 ## 扩展（两型：插件 / Skill）
 
 扩展分**两型**，按"什么时候该运行"来选，放进对应目录即生效：
