@@ -1016,7 +1016,65 @@ c.section('13. 安全回归');
 }
 
 // ── 14. 破坏性接口（放这里：会清空数据目录，必须在所有只读断言之后） ─────
-c.section('14. 破坏性接口（最后执行）');
+// ── 14. 长期冷储存（必须放在「破坏性接口」之前：那份会重置数据目录） ────
+c.section('14. 长期冷储存（快照 / 检索 / 还原 / 轮转）');
+{
+  await c.check('GET /api/cold-storage/status：报告目录与份数', async () => {
+    const r = await hit('GET', '/api/cold-storage/status');
+    assert.equal(r.status, 200);
+    assert.equal(r.data.ok, true);
+    for (const k of ['root', 'dataDir', 'count', 'running']) {
+      assert.ok(k in r.data, `status 缺少字段 ${k}`);
+    }
+  });
+
+  await c.check('POST /api/cold-storage/snapshot：手动打一份快照', async () => {
+    const r = await hit('POST', '/api/cold-storage/snapshot', { body: { reason: 'coverage-http' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.ok, true);
+    assert.ok(r.data.files > 0, '快照应至少写入一个文件');
+  });
+
+  await c.check('GET /api/cold-storage/list：列出快照且不暴露内部字段', async () => {
+    const r = await hit('GET', '/api/cold-storage/list');
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.snapshots) && r.data.snapshots.length >= 1);
+    // dir / files 属于内部细节，不该出现在列表响应里
+    assert.ok(!('dir' in r.data.snapshots[0]), 'list 不该返回 dir');
+    assert.ok(!('files' in r.data.snapshots[0]), 'list 不该返回 files');
+  });
+
+  await c.check('GET /api/cold-storage/search：命中可用，缺 q 返回 400', async () => {
+    const r = await hit('GET', `/api/cold-storage/search?q=${encodeURIComponent('覆盖')}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.data.ok, true);
+    assert.ok(Array.isArray(r.data.hits), '应返回 hits 数组');
+
+    const bad = await hit('GET', '/api/cold-storage/search');
+    assert.equal(bad.status, 400, '缺检索词应 400');
+  });
+
+  await c.check('POST /api/cold-storage/restore：mode=memory 可调用且回显快照', async () => {
+    // 应用正在跑（持有单实例锁），必须 force 才能还原 —— 这里只验证接口通路与幂等返回
+    const r = await hit('POST', '/api/cold-storage/restore', { body: { id: 'latest', mode: 'memory', force: true } });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.ok, true);
+    assert.ok(r.data.snapshot, '应回显用的是哪份快照');
+    assert.ok(!/pre-restore/.test(r.data.snapshot), 'latest 不该选中 pre-restore 快照');
+  });
+
+  await c.check('POST /api/cold-storage/prune：dryRun 不真的删', async () => {
+    const before = (await hit('GET', '/api/cold-storage/list')).data.snapshots.length;
+    const r = await hit('POST', '/api/cold-storage/prune', { body: { keep: 1, dryRun: true } });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.ok, true);
+    const after = (await hit('GET', '/api/cold-storage/list')).data.snapshots.length;
+    assert.equal(after, before, 'dryRun 不应真的删快照');
+  });
+}
+
+// ── 15. 破坏性接口（最后执行） ────────────────────────────────────────────
+c.section('15. 破坏性接口（最后执行）');
 {
   await c.check('POST /api/reset-data：清空数据目录并重置配置', async () => {
     const before = app.store.listChats().length;
@@ -1033,7 +1091,7 @@ c.section('14. 破坏性接口（最后执行）');
 }
 
 // ── 15. 接口覆盖率统计（必须放在最后，才能统计到所有已打过的接口） ──────
-c.section('15. 接口覆盖率统计');
+c.section('16. 接口覆盖率统计');
 {
   // 明确不测的：会在用户桌面弹窗口 / 可能影响用户真实进程
   const SKIP = new Set([

@@ -33,6 +33,16 @@ import { safeFetchBinary, browseLockState } from './safe-fetch.js';
 import { getGlobalBlocklist, updateGlobalBlocklist, FIXED_PRICE_FEED_URL } from './community.js';
 import { listAccounts, removeAccount, loginAccount, publishModule, verifyInstallCodes, installByCode } from './market.js';
 import { detectDialect as detectThinkingDialect } from './thinking.js';
+// 冷储存：下面几条「清空 / 删除 / 重置」都是真删，删之前先落一份可检索的快照。
+import {
+  captureBeforeReset,
+  archiveStatus,
+  listSnapshots,
+  searchArchives,
+  snapshot as coldSnapshot,
+  restoreSnapshot,
+  pruneArchives
+} from './cold-storage.js';
 
 /**
  * 构建路由表。
@@ -136,6 +146,10 @@ export function createRoutes(deps) {
           if (!looksLikeDataDir || resolved === path.parse(resolved).root) {
             return json(res, 400, { ok: false, error: `数据目录不像 QQ Agent 数据目录，已拒绝重置：${resolved}` });
           }
+
+          // 全量重置会删掉整个 data/。它自己会留一份整目录 .backup-*，但那是不可检索的大坨副本；
+          // 这里先给冷储存留一份能被关键词检索的快照。
+          captureBeforeReset('reset-data');
 
           await orchestrator.abortAll();
           onebot.close();
@@ -1058,6 +1072,7 @@ export function createRoutes(deps) {
       // 主动删除一条会话记录（正在运行的不能删）
       method: 'DELETE', pattern: /^\/api\/sessions\/([\w-]+)$/,
       handler: async ({ res, json, match }) => {
+        captureBeforeReset('delete-session');
         const removed = sessions.remove(match[1]);
         if (!removed) return json(res, 409, { ok: false, error: '会话不存在或正在运行（运行中的会话不能删除）' });
         emit('session-end', { sessionId: match[1], status: 'deleted' });
@@ -1068,6 +1083,8 @@ export function createRoutes(deps) {
       // 清空全部已结束的会话记录（保留运行中/等待中的）
       method: 'POST', pattern: '/api/sessions/clear-finished',
       handler: async ({ res, json }) => {
+        // 会话留档是「那次对话的完整记录」，一口气清掉就没了：先落一份冷储存。
+        captureBeforeReset('clear-finished-sessions');
         const removed = sessions.clearFinished();
         emit('session-end', { status: 'cleared', removed });
         return json(res, 200, { ok: true, removed });
@@ -1170,6 +1187,7 @@ export function createRoutes(deps) {
       method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)\/members\/(\d+)$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
+        captureBeforeReset('remove-member-memory', { chatKeys: [chatKey] });
         memory.removeMember(chatKey, match[3]);
         emit('memory-update', { chatKey });
         return json(res, 200, { ok: true });
@@ -1180,6 +1198,7 @@ export function createRoutes(deps) {
       method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
+        captureBeforeReset('remove-chat-memory', { chatKeys: [chatKey] });
         memory.removeChat(chatKey);
         emit('memory-update', { chatKey });
         return json(res, 200, { ok: true });
@@ -1331,6 +1350,7 @@ export function createRoutes(deps) {
       method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/clear$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
+        captureBeforeReset('clear-chat', { chatKeys: [chatKey] });
         const removed = store.clearChat(chatKey);
         emit('chat-update', chatKey);
         return json(res, 200, { ok: true, removed });
@@ -1354,6 +1374,7 @@ export function createRoutes(deps) {
         const body = await bodyOf(req);
         const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter((n) => Number.isFinite(n)) : [];
         if (!ids.length) return json(res, 400, { ok: false, error: '缺少要删除的消息 id 列表（ids）' });
+        captureBeforeReset('delete-messages', { chatKeys: [chatKey] });
         const removed = store.removeByLocalIds(chatKey, ids);
         emit('chat-update', chatKey);
         return json(res, 200, { ok: true, removed });
@@ -1472,6 +1493,87 @@ export function createRoutes(deps) {
           return json(res, 502, { ok: false, error: `转发失败：${String(e?.cause?.code || e?.message || e).slice(0, 120)}` });
         }
         return undefined;   // 已自行写响应
+      }
+    },
+
+    // ── 长期冷储存 ────────────────────────────────────────────────────────────
+    // 上面那些删除路径在动手前会自动打快照；这组接口是给人/控制台用的读取与还原入口。
+    {
+      method: 'GET', pattern: '/api/cold-storage/status',
+      handler: async ({ res, json }) => json(res, 200, { ok: true, ...archiveStatus() })
+    },
+    {
+      method: 'GET', pattern: '/api/cold-storage/list',
+      handler: async ({ res, json }) => json(res, 200, {
+        ok: true,
+        // 不把 dir 与 files 的绝对/全量信息塞给前端：列表只需要知道「有哪几份、多大、为什么存的」
+        snapshots: listSnapshots().map(({ dir, files, ...rest }) => rest)
+      })
+    },
+    {
+      method: 'GET', pattern: '/api/cold-storage/search',
+      handler: async ({ res, json, url }) => {
+        const q = String(url.searchParams.get('q') || '').trim();
+        const chat = String(url.searchParams.get('chat') || '').trim();
+        const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 30));
+        if (!q) return json(res, 400, { ok: false, error: '缺少检索词 q' });
+        try {
+          const result = searchArchives([q], { onlyChat: chat || null, limit, perFile: 3, context: 80 });
+          const hits = [];
+          for (const group of result.results) {
+            for (const hit of group.hits) {
+              hits.push({
+                snapshot: group.snapshot.id,
+                at: group.snapshot.createdAt,
+                reason: group.snapshot.reason,
+                label: hit.label,
+                snippet: hit.snippet
+              });
+            }
+          }
+          return json(res, 200, { ok: true, q, chat: chat || null, total: result.total, hits });
+        } catch (error) {
+          return json(res, 500, { ok: false, error: `检索失败：${String(error?.message ?? error)}` });
+        }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/cold-storage/snapshot',
+      handler: async ({ req, res, json }) => {
+        const body = await bodyOf(req);
+        try {
+          const result = await coldSnapshot({ reason: String(body.reason || 'manual'), note: String(body.note || '') });
+          return json(res, 200, {
+            ok: true, id: result.id, dir: result.dir,
+            files: result.manifest.files.length, bytes: result.manifest.totalBytes
+          });
+        } catch (error) {
+          return json(res, 500, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/cold-storage/restore',
+      handler: async ({ req, res, json }) => {
+        const body = await bodyOf(req);
+        try {
+          const report = restoreSnapshot(String(body.id || 'latest'), {
+            mode: body.mode === 'state' ? 'state' : 'memory',
+            force: body.force === true
+          });
+          emit('memory-update', { chatKey: '' });
+          return json(res, 200, { ok: true, ...report });
+        } catch (error) {
+          return json(res, 400, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/cold-storage/prune',
+      handler: async ({ req, res, json }) => {
+        const body = await bodyOf(req);
+        const keep = Math.max(1, Number(body.keep) || 100);
+        return json(res, 200, { ok: true, ...pruneArchives({ keep, dryRun: body.dryRun === true }) });
       }
     },
   ];

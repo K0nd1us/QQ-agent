@@ -3,6 +3,12 @@
 # 分享给别人前用 `node scripts/sanitize-release.mjs` 生成干净副本。
 data/
 
+# 长期冷储存：是 data/ 的**兄弟目录**（多实例时叫 cold-storage-2/），
+# 里面是历史快照、群友记忆与消息留档，同样属于隐私数据，不进版本库。
+cold-storage/
+cold-storage-*/
+**/cold-storage/
+
 # 本地日志与外部运行文件不纳入源码。
 *.log
 /runtime/
