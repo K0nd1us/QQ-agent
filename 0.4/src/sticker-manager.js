@@ -48,6 +48,39 @@ export function localStickerPath(raw) {
 // （靠"默认返回 .jpg"歪打正着），加新格式时要改三处、极易漏。
 import { detectImageExt } from './image-type.js';
 
+// ── 收藏时自动看图写备注（本地扩展，2026-10-21）──────────────────────────────
+// 背景：模型判断"要不要发这张表情"靠的是提示词里那行备注（desc/localNote）。
+// 收藏来的表情如果只有一句"好图偷了"，下次它自己都认不出这张画的是什么，
+// 于是要么每次都先调 get_sticker_image（多一次视觉调用），要么干脆不发。
+// 这里在收藏成功后就地看一眼图，把画面 + 适用语境写成 localNote，并给 tags。
+const ANNOTATE_SYSTEM = [
+  '你是 QQ 群聊表情包的标注助手。用户给你一张刚收藏的表情包图片，你要用中文写一条备注。',
+  '严格输出一行 JSON：{"note":"…","tags":["…"]}',
+  'note 规则：不超过 26 个字；先说画面里是谁/什么、什么表情或图上文字，再说适合用在什么语境（如 嘲讽/卖萌/无语/赞同/挑衅/震惊/点赞/安慰）；',
+  '不要出现"这张图""表情包""图片中"这类废话，不要描述配色和画质。',
+  'tags 规则：2~4 个简短中文词，用于检索。',
+  '只输出 JSON，不要解释、不要代码块。'
+].join('\n');
+
+/** 从模型输出里抠出 {note, tags}；失败返回 null。 */
+function parseAnnotation(text) {
+  const raw = String(text ?? '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  if (!raw) return null;
+  const brace = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (brace >= 0 && end > brace) {
+    try {
+      const obj = JSON.parse(raw.slice(brace, end + 1));
+      const note = String(obj?.note ?? '').trim().replace(/\s+/g, ' ').slice(0, 60);
+      const tags = (Array.isArray(obj?.tags) ? obj.tags : [])
+        .map((t) => String(t).trim()).filter(Boolean).slice(0, 4);
+      if (note) return { note, tags };
+    } catch { /* 落到下面按纯文本兜底 */ }
+  }
+  const fallback = raw.replace(/\s+/g, ' ').slice(0, 40);
+  return fallback ? { note: fallback, tags: [] } : null;
+}
+
 export class StickerManager {
   constructor(onebot) {
     this.onebot = onebot;
@@ -214,6 +247,7 @@ export class StickerManager {
       if (file) target.qqFile = file;
       target.persistFailed = !String(target.url || '').startsWith('file:///');
       saveStickerStore(this.entries);
+      await this.#autoAnnotate(target, bytes, noteText);
       return target;
     }
 
@@ -240,6 +274,7 @@ export class StickerManager {
     this.entries.push(entry);
     this.collectTimes.push(now);
     saveStickerStore(this.entries);
+    await this.#autoAnnotate(entry, bytes, noteText);
     return entry;
   }
 
@@ -248,6 +283,52 @@ export class StickerManager {
    * 路径 1：OneBot get_image（消息里的 file id → 本地缓存文件，不依赖 url 时效）
    * 路径 2：直接下载 url（新消息 url 未过期时有效）
    */
+  /**
+   * 收藏后自动看一眼图写备注（失败静默，绝不影响收藏本身）。
+   * 备注写进 localNote、标签写进 tags —— 提示词列表情时会带上它们，
+   * 否则模型每次想发表情都得先 get_sticker_image 看图，最后干脆不发。
+   */
+  async #autoAnnotate(entry, bytes, tasteNote = '') {
+    try {
+      if (!entry?.id) return;
+      if (getConfig().sticker?.autoAnnotate === false) return;
+      if (!bytes || !bytes.length) return;
+      // 已经有备注就别覆盖：可能是我手动写的、或之前标注过的，重复收藏不该把好备注冲掉
+      const existing = this.entries.find((e) => e.id === entry.id);
+      if (String(existing?.localNote || existing?.note || '').trim()) return;
+      const ext = String(detectImageExt(bytes) || '.png').toLowerCase();
+      const mime = ext === '.gif' ? 'image/gif'
+        : ext === '.png' ? 'image/png'
+        : ext === '.webp' ? 'image/webp'
+        : 'image/jpeg';
+      const { chatCompletion } = await import('./llm.js');
+      const res = await chatCompletion({
+        messages: [
+          { role: 'system', content: ANNOTATE_SYSTEM },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: '这张是刚从群聊里收藏的表情包，请按要求输出 JSON。' },
+              { type: 'image_url', image_url: { url: `data:${mime};base64,${bytes.toString('base64')}` } }
+            ]
+          }
+        ],
+        temperature: 0.2,
+        maxTokens: 220
+      });
+      const text = String(res?.message?.content ?? res?.content ?? '');
+      const parsed = parseAnnotation(text);
+      if (!parsed?.note) return;
+      const patch = { note: parsed.note };
+      if (parsed.tags.length) patch.tags = parsed.tags;
+      const taste = String(tasteNote || '').trim();
+      if (taste && taste !== parsed.note) patch.usage = taste.slice(0, 200);
+      this.note(entry.id, patch);
+    } catch (error) {
+      console.warn(`[sticker] 自动备注失败（不影响收藏）: ${error?.message ?? error}`);
+    }
+  }
+
   async #persistImage(id, { url, file }) {
     const buf = await this.#getImageBytes({ url, file });
     if (!buf) throw new Error('图片转存失败（get_image 无缓存且 url 下载失败）');

@@ -255,7 +255,7 @@ function readBounded(res, maxBytes, asText) {
 }
 
 // 使用已校验的 IP 发起请求（保留 Host/SNI），从根上消除 DNS rebinding。
-function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  return new Promise((resolve, reject) => {
+function requestOnce(url, ip, { asBinary = false, maxBytes = 50000, headers = null } = {}) {  return new Promise((resolve, reject) => {
     const mod = url.protocol === 'https:' ? https : http;
     const port = url.port || (url.protocol === 'https:' ? 443 : 80);
     const req = mod.request({
@@ -267,7 +267,10 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
         host: url.host,
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) qq-agent/1.0',
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,image/avif,image/webp,image/*;q=0.8',
-        'accept-language': 'zh-CN,zh;q=0.9'
+        'accept-language': 'zh-CN,zh;q=0.9',
+        // 调用方可覆盖（有些站按 UA 做反爬，写死 qq-agent/1.0 会被判 spider）
+        ...(headers && typeof headers === 'object' ? headers : {}),
+        host: url.host
       },
       servername: url.protocol === 'https:' ? url.hostname : undefined,
       rejectUnauthorized: url.protocol === 'https:',
@@ -292,13 +295,13 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
 const MAX_REDIRECTS = 5;
 
 /** 抓取网页文本（≤50000 字符），SSRF 全防护（不做内网例外）。 */
-export async function safeFetch(urlString, { browseLocked = false } = {}) {
+export async function safeFetch(urlString, { browseLocked = false, maxBytes = 50000, headers = null } = {}) {
   // 锁定校验放在**最前面**，连 DNS 都不做 —— 不在白名单就根本不该发起连接
   const lock = browseLocked ? checkBrowseLock(urlString) : { enabled: false, allowed: true, host: '' };
   if (!lock.allowed) throw new Error(`浏览锁定：${lock.host || '该地址'} 不在允许的域名清单内`);
   let { url, ip } = await validateFetchUrl(urlString);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, { asBinary: false, maxBytes: 50000 });
+    const result = await requestOnce(url, ip, { asBinary: false, maxBytes: Math.max(1024, Number(maxBytes) || 50000), headers });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();

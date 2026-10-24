@@ -20,7 +20,8 @@ import { resolveOfficialPrice, listOfficialPrices } from './model-prices.js';
 import { refreshPriceFeed, priceFeedStatus, initPriceFeed } from './price-feed.js';
 import {
   currentProviders, setProviderKey, testAllProviders, testOneProvider,
-  testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider, removeProvider
+  withResolvedKey,
+  testModelChat, fetchModelsFrom, upsertProvider, updateProvider, addModelsToProvider, removeModelFromProvider, removeProvider
 } from './providers.js';
 import { scanModelsVision, visionResults, modelImageVerdict } from './vision-scan.js';
 import { builtinVisionResults } from './model-vision-docs.js';
@@ -358,7 +359,11 @@ export function createRoutes(deps) {
         try {
           const body = await bodyOf(req);
           const cfgNow = getConfig();
-          const baseUrl = String(body.baseUrl || cfgNow.api.baseUrl || '');
+          /* 2026-10-23：按 providerId 拉模型时必须用该提供商自己的 baseURL，
+             否则会拿 A 的端点 + B 的 Key 去请求，稳定 401（以前只认 body.baseUrl / 全局端点）。 */
+          const pidGiven = String(body.providerId ?? '').trim();
+          const provGiven = pidGiven ? currentProviders().find((x) => x.id === pidGiven) : null;
+          const baseUrl = String(body.baseUrl || provGiven?.baseURL || cfgNow.api.baseUrl || '');
           // Key 解析顺序（2026-09-20 修 401 高发）：显式明文 > 按 providerId 查该提供商
           // 保存的 Key（dshProviderKeys / providers[].apiKey）> 顶层 api.apiKey。
           // 旧实现只看顶层 Key —— 多提供商场景下顶层只存"当前选中那个"的 Key，
@@ -369,7 +374,9 @@ export function createRoutes(deps) {
           } else {
             const pid = String(body.providerId ?? '').trim();
             const p = pid ? currentProviders().find((x) => x.id === pid) : null;
-            apiKey = String(p?.apiKey ?? '').trim();
+            /* 2026-10-23：原来只读 p.apiKey，可真实 Key 多数存在 config.dshProviderKeys 里，
+               于是"按提供商拉模型"必 401；改用 withResolvedKey 走统一解析。 */
+            apiKey = p ? String(withResolvedKey(p, cfgNow).apiKey ?? '').trim() : '';
             if (!apiKey) apiKey = String(cfgNow.api.apiKey || '').trim();
             if (apiKey === '******') apiKey = '';
           }
@@ -428,6 +435,25 @@ export function createRoutes(deps) {
             baseUrl: String(body.baseUrl ?? ''), apiKey: String(body.apiKey ?? ''), models: body.models || []
           });
           return json(res, 200, { ok: true, ...r, provider: sanitizeProvider(r.provider) });
+        } catch (error) {
+          return json(res, 400, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
+    {
+      // 改已有提供商的端点 / 显示名 / 密钥（2026-10-23）：主模型换了 API 地址必须走这里
+      method: 'POST', pattern: '/api/providers/update',
+      handler: async ({ req, res, json }) => {
+        try {
+          const body = await bodyOf(req);
+          const p = updateProvider({
+            providerId: String(body.providerId ?? ''),
+            baseUrl: body.baseUrl === undefined ? undefined : String(body.baseUrl ?? ''),
+            displayName: body.displayName === undefined ? undefined : String(body.displayName ?? ''),
+            apiKey: body.apiKey === undefined ? undefined : String(body.apiKey ?? '')
+          });
+          emit('status', { configUpdated: true });
+          return json(res, 200, { ok: true, provider: sanitizeProvider(p) });
         } catch (error) {
           return json(res, 400, { ok: false, error: String(error?.message ?? error) });
         }
@@ -747,7 +773,9 @@ export function createRoutes(deps) {
             description: String(body?.description || ''),
             token: acc.token,
             // 阿里云验证码验签参数：远端市场对发布强制要求（一次性，前端弹出验证后拿到）
-            captchaVerifyParam: String(body?.captchaVerifyParam || '')
+            captchaVerifyParam: String(body?.captchaVerifyParam || ''),
+            // update=true：覆盖更新市场上已存在的同 id 条目（作者本人，仍走人机验证）
+            update: body?.update === true
           });
           return json(res, 200, {
             ok: true, item: r.item || null,

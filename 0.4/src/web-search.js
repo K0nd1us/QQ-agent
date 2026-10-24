@@ -530,54 +530,97 @@ export function extractPageDigest(html, _baseUrl = '', { maxChars = 6000, maxLin
 export async function bingImageSearch(query, { limit = 8, browseLocked = false } = {}) {
   const q = String(query ?? '').trim();
   if (!q) throw new Error('搜索关键词为空');
-  const url = `https://cn.bing.com/images/search?q=${encodeURIComponent(q)}&form=HDRSC2`;
+  const n = Math.max(1, Number(limit) || 8);
+  const url = `https://cn.bing.com/images/async?q=${encodeURIComponent(q)}&first=0&count=${Math.min(35, n * 4)}&mmasync=1`;
   // 图搜是"搜索阶段"，也必须受浏览锁定约束，否则锁定只挡下载不挡搜索，链条断一环
-  const { body } = await safeFetch(url, { browseLocked });
+  const { body } = await safeFetch(url, { browseLocked, maxBytes: 600_000 });
   const html = String(body ?? '');
   const out = [];
   const seen = new Set();
-  for (const m of html.matchAll(/m="([^"]+)"/g)) {
-    const raw = decodeHtml(m[1]).replace(/&quot;/g, '"');
-    let url2 = '';
-    try {
-      const j = JSON.parse(raw);
-      url2 = String(j.murl || j.mediaurl || '').trim();
-    } catch {
-      // 属性里偶尔不是合法 JSON（被截断），用正则兜一次
-      const mm = raw.match(/"murl"\s*:\s*"([^"]+)"/);
-      url2 = mm ? mm[1] : '';
+  const push = (raw) => {
+    let u = decodeHtml(String(raw || '')).replace(/\\\//g, '/').replace(/&amp;/g, '&').trim();
+    if (!/^https?:\/\//i.test(u) || seen.has(u)) return;
+    seen.add(u);
+    out.push({ title: q, url: u });
+  };
+  // 2026-10-21 修：现在的结果块是 `m="{&quot;murl&quot;:&quot;…&quot;,…}"`
+  // 旧正则只认 `"murl":"…"`（未转义），所以 0 命中。先 unescape 实体再抓一次。
+  const decoded = decodeHtml(html).replace(/&quot;/g, '"');
+  for (const m of decoded.matchAll(/"murl"\s*:\s*"([^"]+)"/g)) {
+    push(m[1]);
+    if (out.length >= n) break;
+  }
+  // 再兜一层：老格式 `m="{...}"` 属性块
+  if (out.length < n) {
+    for (const m of html.matchAll(/m="([^"]+)"/g)) {
+      const raw = decodeHtml(m[1]).replace(/&quot;/g, '"');
+      let u = '';
+      try { u = String(JSON.parse(raw).murl || '').trim(); } catch { const mm = raw.match(/"murl"\s*:\s*"([^"]+)"/); u = mm ? mm[1] : ''; }
+      if (u) { push(u); if (out.length >= n) break; }
     }
-    if (!/^https?:\/\//i.test(url2) || seen.has(url2)) continue;
-    seen.add(url2);
-    out.push({ title: q, url: url2 });
-    if (out.length >= Math.max(1, Number(limit) || 8)) break;
   }
   if (!out.length) throw new Error('Bing 图片搜索没解析到结果（页面结构可能已改版）');
-  return out;
+  return out.slice(0, n);
 }
 
-/** 百度图片搜索。百度把直链放在 `objURL`（近年版改成 `thumbURL`/`middleURL`，都能兜）。 */
+/**
+ * 百度图片搜索。
+ *
+ * 2026-10-21 修：老的 HTML 页（`/search/index?tn=baiduimage`）已经拿不到结果了
+ * （页面改成懒加载 + 直链加密，`objURL` 不再出现，实测 0 命中）。
+ * 改用它的**结果 JSON 接口** `acjson`：结构稳定，直接给 `middleURL`/`thumbURL`。
+ * 拿到的都是 `img*.baidu.com/it/u=...` 的图片直链（约 500px），可直接发/配图。
+ */
 export async function baiduImageSearch(query, { limit = 8, browseLocked = false } = {}) {
   const q = String(query ?? '').trim();
   if (!q) throw new Error('搜索关键词为空');
-  const url = `https://image.baidu.com/search/index?tn=baiduimage&word=${encodeURIComponent(q)}`;
-  const { body } = await safeFetch(url, { browseLocked });
-  const html = String(body ?? '');
+  const n = Math.max(1, Number(limit) || 8);
+  const url = `https://image.baidu.com/search/acjson?tn=resultjson_com&ipn=rj&ct=201326592&is=&fp=result&word=${encodeURIComponent(q)}&pn=0&rn=${Math.min(60, n * 3)}&ie=utf-8&oe=utf-8`;
+  // 结果 JSON 比普通网页大（几十 KB），放宽上限，否则会被截断
+  // UA/Referer 必须伪装成普通浏览器：用默认的 qq-agent/1.0 会被判 spider，直接回
+  // {"antiFlag":1,"message":"Forbid spider access"} 空结果
+  const { body } = await safeFetch(url, {
+    browseLocked,
+    maxBytes: 600_000,
+    headers: {
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      referer: 'https://image.baidu.com/',
+      accept: 'application/json, text/plain, */*'
+    }
+  });
+  const text = String(body ?? '');
   const out = [];
   const seen = new Set();
-  for (const key of ['objURL', 'middleURL', 'thumbURL', 'hoverURL']) {
-    const re = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'g');
-    for (const m of html.matchAll(re)) {
-      const u = decodeHtml(m[1]).replace(/\\\//g, '/');
-      if (!/^https?:\/\//i.test(u) || seen.has(u)) continue;
-      seen.add(u);
-      out.push({ title: q, url: u });
-      if (out.length >= Math.max(1, Number(limit) || 8)) break;
+  const push = (u) => {
+    const clean = decodeHtml(String(u || '')).replace(/\\\//g, '/').trim();
+    if (!/^https?:\/\//i.test(clean)) return;
+    // 同一张图会有 middleURL/thumbURL/hoverURL 三种尺寸，按 u= 参数去重
+    const key = (clean.match(/u=([^&?]+)/) || [null, clean])[1];
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ title: q, url: clean });
+  };
+  // 优先 JSON 解析；接口偶尔返回带尾逗号/非严格 JSON，失败再退回正则
+  try {
+    const data = JSON.parse(text)?.data || [];
+    for (const item of data) {
+      if (!item || typeof item !== 'object') continue;
+      push(item.middleURL || item.thumbURL || item.hoverURL || item.objURL);
+      if (out.length >= n) break;
     }
-    if (out.length >= Math.max(1, Number(limit) || 8)) break;
+  } catch { /* 落到正则 */ }
+  if (out.length < n) {
+    for (const key of ['middleURL', 'thumbURL', 'hoverURL']) {
+      const re = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'g');
+      for (const m of text.matchAll(re)) {
+        push(m[1]);
+        if (out.length >= n) break;
+      }
+      if (out.length >= n) break;
+    }
   }
-  if (!out.length) throw new Error('百度图片搜索没解析到结果（页面结构可能已改版）');
-  return out;
+  if (!out.length) throw new Error('百度图片搜索没解析到结果（接口结构可能已改版）');
+  return out.slice(0, n);
 }
 
 /**

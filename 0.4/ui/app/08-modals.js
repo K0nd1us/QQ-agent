@@ -281,7 +281,7 @@ function openModelConfigModal() {
         </div>
         <div class="hint" id="mc-test-result" style="margin-top:4px"></div></div>
       <div class="field-row">
-        <div class="field"><label>当前 Base URL</label>
+        <div class="field"><label>当前 Base URL（在「模型管理」里可改）</label>
           <input type="text" id="mc-baseurl" readonly value="${esc(c.api?.baseUrl || '')}" /></div>
         <div class="field"><label>当前 API Key</label>
           <div style="display:flex;gap:8px">
@@ -519,8 +519,14 @@ function openModelConfigModal() {
     if (dEl.dataset.model !== undefined || dEl.value === '') patch.videoModel = dEl.dataset.model || '';
     // Key：只在用户输入了非掩码明文时才回传（掩码/留空 = 保持）
     const raw = (overlay.querySelector('#mc-apikey').value || '').trim();
-    if (raw && raw !== '******') patch.apiKey = raw;
+    const keyForPid = patch.provider || c.api?.provider || '';
     try {
+      // 有提供商时，Key 必须写进提供商（dshProviderKeys），否则会被旧 Key 盖掉 ——
+      // 这也是「在模型配置里改了 Key 却不生效」的根因。
+      if (raw && raw !== '******') {
+        if (keyForPid) await api('/api/providers/set-key', { method: 'POST', body: JSON.stringify({ providerId: keyForPid, apiKey: raw }) });
+        else patch.apiKey = raw;
+      }
       await api('/api/config', { method: 'POST', body: JSON.stringify({ api: patch }) });
       closeModelModal(overlay);
       loadSettings();
@@ -908,11 +914,16 @@ function openModelManageModal() {
     if (!p) { right.innerHTML = '<div class="muted" style="padding:12px;font-size:12px">左侧选中一个提供商后，这里显示它的端点、密钥与模型。</div>'; return; }
     const names = p.modelNames || {};
     right.innerHTML = `
-      <div class="field"><label>Base URL</label>
-        <input type="text" id="mg-baseurl" value="${esc(p.baseURL || '')}" readonly style="width:100%" /></div>
+      <div class="field"><label>Base URL（可改）</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="mg-baseurl" value="${esc(p.baseURL || '')}" placeholder="https://api.example.com/v1" style="flex:1" />
+          <button class="btn btn-small" id="mg-save-url" title="改完点这里保存；主模型正用这个提供商时会同步更新">保存端点</button>
+        </div>
+        <div class="hint" style="margin-top:4px">换 API 地址就改这里；主模型/备选模型都引用这个提供商，改完不用重新选模型。</div></div>
       <div class="field"><label>API Key</label>
         <div style="display:flex;gap:8px">
-          <input type="password" id="mg-apikey" value="${esc(p.hasKey ? '******' : '')}" readonly placeholder="${p.hasKey ? '' : '（未保存）'}" style="flex:1" />
+          <input type="password" id="mg-apikey" value="${esc(p.hasKey ? '******' : '')}" placeholder="${p.hasKey ? '已保存（显示为 ******）—— 要换就整个替换' : '粘贴 API Key'}" autocomplete="new-password" style="flex:1" />
+          <button class="btn btn-small" id="mg-apikey-save" type="button" title="把输入框里的新 Key 写进这个提供商">保存密钥</button>
           <button class="btn btn-small" id="mg-apikey-toggle" type="button">显示</button>
           <button class="btn btn-small btn-danger" id="mg-apikey-clear" type="button" title="清除已保存的 API Key">清除密钥</button>
         </div></div>
@@ -920,6 +931,7 @@ function openModelManageModal() {
         <div style="display:flex;gap:6px;margin-bottom:6px">
           <button class="btn btn-small" id="mg-add-model" title="手动填写模型 id 添加，不依赖拉取">＋ 添加模型</button>
           <button class="btn btn-small" id="mg-fetch-models">拉取模型列表</button>
+          <button class="btn btn-small" id="mg-set-main" title="把选中的模型设为当前主模型">✓ 设为主模型</button>
           <button class="btn btn-small btn-danger" id="mg-del-model">删除模型</button>
         </div>
         <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
@@ -930,6 +942,71 @@ function openModelManageModal() {
               <span class="muted" style="font-size:11px">${esc(m)}</span>
             </label>`).join('') || '<div class="muted" style="padding:10px">该提供商下没有模型：点「＋ 添加模型」手动加，或「拉取模型列表」自动拉取。</div>'}
         </div></div>`;
+
+    // 保存端点（2026-10-23）：以前这里 readonly，等于提供商建好就没法换 API 地址
+    right.querySelector('#mg-save-url').addEventListener('click', async () => {
+      const btn = right.querySelector('#mg-save-url');
+      const val = right.querySelector('#mg-baseurl').value.trim();
+      if (!val) { alert('Base URL 不能为空'); return; }
+      if (val === (p.baseURL || '')) { alert('端点没有变化'); return; }
+      btn.disabled = true;
+      btn.textContent = '保存中…';
+      try {
+        await api('/api/providers/update', {
+          method: 'POST',
+          body: JSON.stringify({ providerId: p.id, baseUrl: val })
+        });
+        await loadSettings();
+        renderLeft();
+        renderRight();
+      } catch (e) {
+        alert(`保存端点失败：${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '保存端点';
+      }
+    });
+    // 设为主模型：选中下面某个模型后一键切过去（不必再进「模型配置」）
+    right.querySelector('#mg-set-main').addEventListener('click', async () => {
+      const picked = right.querySelector('input[name="mg-model"]:checked');
+      if (!picked) { alert('请先在模型列表里选中一个模型'); return; }
+      const model = picked.value;
+      try {
+        await api('/api/config', {
+          method: 'POST',
+          body: JSON.stringify({ api: { provider: p.id, model, baseUrl: p.baseURL } })
+        });
+        await loadSettings();
+        renderLeft();
+        renderRight();
+        alert(`已设为主模型：${model}`);
+      } catch (e) {
+        alert(`设置失败：${e.message}`);
+      }
+    });
+    // 保存密钥（2026-10-23）：以前这里只能显示/清除，想换 Key 只能整套新建提供商。
+    // 真正的 Key 存在 config.dshProviderKeys[providerId] 里（请求时由 resolveApiKey 优先取它），
+    // 所以必须走 /api/providers/set-key，写 config.api.apiKey 是旧路径、会被提供商里的 Key 盖掉。
+    right.querySelector('#mg-apikey-save').addEventListener('click', async () => {
+      const input = right.querySelector('#mg-apikey');
+      const btn = right.querySelector('#mg-apikey-save');
+      const val = String(input.value || '').trim();
+      if (!val || val === '******') { alert('先把新的 API Key 粘贴进输入框（当前显示的是掩码）'); input.focus(); return; }
+      btn.disabled = true;
+      btn.textContent = '保存中…';
+      try {
+        await api('/api/providers/set-key', { method: 'POST', body: JSON.stringify({ providerId: p.id, apiKey: val }) });
+        await loadSettings();
+        renderLeft();
+        renderRight();
+        alert('API Key 已保存');
+      } catch (e) {
+        alert(`保存密钥失败：${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '保存密钥';
+      }
+    });
 
     // Key 显示/隐藏：走 /api/providers/key 取明文（与主页面同款）
     right.querySelector('#mg-apikey-toggle').addEventListener('click', async () => {

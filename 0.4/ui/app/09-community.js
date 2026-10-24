@@ -991,7 +991,7 @@ async function openMarketUploadModal(kind, moduleId) {
   const renderPublishStep = (accountUsername) => {
     setBody(`
       <div class="hint" style="margin-bottom:10px">
-        以 <b>${esc(accountUsername)}</b> 的名义上传 <b>${esc(moduleId)}</b>。如果市场上已存在同 id 的条目，上传会被拒绝（换一个 id 再试）。
+        以 <b>${esc(accountUsername)}</b> 的名义上传 <b>${esc(moduleId)}</b>。如果市场上已存在同 id 的条目，用下面的「覆盖更新版本」提交新版本（直接上传会被拒绝）。
       </div>
       <div class="field"><label>展示名</label>
         <input type="text" id="mu-name" value="${esc(displayName0)}" maxlength="60" /></div>
@@ -1003,13 +1003,14 @@ async function openMarketUploadModal(kind, moduleId) {
         请先确认里面没有 API Key、Cookie 等私密信息 —— 审核通过后所有人都能下载。
       </div>`,
       `<button class="btn btn-primary" id="mu-pub-go">打包上传</button>
+       <button class="btn" id="mu-pub-update">覆盖更新版本</button>
        <button class="btn" id="mu-pub-cancel">取消</button>`);
     overlay.querySelector('#mu-pub-cancel')?.addEventListener('click', () => closeModelModal(overlay));
-    overlay.querySelector('#mu-pub-go')?.addEventListener('click', async () => {
+    // update=true 走「覆盖更新」，false 走「首次发布」
+    const startPublish = (update) => {
       const go = overlay.querySelector('#mu-pub-go');
       const msg = overlay.querySelector('#mu-pub-msg');
       const displayName = overlay.querySelector('#mu-name')?.value.trim() || '';
-      const description = overlay.querySelector('#mu-desc')?.value.trim() || '';
       if (!displayName) { msg.textContent = '展示名不能为空'; return; }
       // 人机验证：远端市场对发布强制验签，通过后把 captchaVerifyParam 随上传透传
       go.disabled = true;
@@ -1017,25 +1018,27 @@ async function openMarketUploadModal(kind, moduleId) {
       showCaptcha((captchaVerifyParam) => {
         go.disabled = false;
         if (captchaVerifyParam instanceof Error) { msg.textContent = captchaVerifyParam.message; return; }
-        doPublish(captchaVerifyParam);
+        doPublish(captchaVerifyParam, update);
       });
-    });
+    };
+    overlay.querySelector('#mu-pub-go')?.addEventListener('click', () => startPublish(false));
+    overlay.querySelector('#mu-pub-update')?.addEventListener('click', () => startPublish(true));
 
-    async function doPublish(captchaVerifyParam) {
+    async function doPublish(captchaVerifyParam, update = false) {
       const go = overlay.querySelector('#mu-pub-go');
       const msg = overlay.querySelector('#mu-pub-msg');
       const displayName = overlay.querySelector('#mu-name')?.value.trim() || '';
       const description = overlay.querySelector('#mu-desc')?.value.trim() || '';
       go.disabled = true;
-      msg.textContent = '正在打包并上传…';
+      msg.textContent = update ? '正在打包并上传新版本…' : '正在打包并上传…';
       try {
         await api('/api/market/publish', {
           method: 'POST',
-          body: JSON.stringify({ kind, id: moduleId, displayName, description, accountUsername, captchaVerifyParam })
+          body: JSON.stringify({ kind, id: moduleId, displayName, description, accountUsername, captchaVerifyParam, update })
         });
         setBody(`
           <div class="hint" style="margin:8px 0">
-            ✅ 上传完成！<b>${esc(moduleId)}</b> 已进入<b>待审核</b>状态 ——
+            ✅ ${update ? '更新已提交！' : '上传完成！'}<b>${esc(moduleId)}</b> 已进入<b>待审核</b>状态 ——
             审核通过后才会出现在市场，并生成「复制口令！」按钮。
           </div>
           <div class="hint">可以关闭这个窗口，或去 <a href="https://www.kondius.cn/qq-agent/skill-market/" target="_blank" rel="noopener">市场页面</a> 看看进展。</div>`,

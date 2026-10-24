@@ -176,7 +176,7 @@ function providerKeyValue(provider, cfg) {
 }
 
 /** 提供商对象里 apiKey 可能是掩码/引用，请求前必须解出真实 key。 */
-function withResolvedKey(p, cfg = getConfig()) {
+export function withResolvedKey(p, cfg = getConfig()) {
   const real = providerKeyValue(p, cfg);
   return { ...p, apiKey: real };
 }
@@ -331,6 +331,59 @@ export function removeModelFromProvider(providerId, modelId) {
   }
   updateConfig({ providers: providers.map((x) => { const { apiKey, ...rest } = x; return rest; }) });
   return p;
+}
+
+/**
+ * 更新已有提供商的端点 / 显示名 / 密钥（2026-10-23 新增）。
+ *
+ * 之前只有 upsertProvider（同 baseURL 才能合并），提供商一旦建好，Base URL
+ * 就再也没法改 —— UI 里那个输入框是 readonly，主模型也就等于被钉死在
+ * 建它时的那个端点上。这里补上"改端点"这条路，并在主模型正用该提供商时
+ * 同步 api.baseUrl，避免请求还发往旧地址。
+ */
+export function updateProvider({ providerId, baseUrl, displayName, apiKey } = {}) {
+  const pid = String(providerId ?? '').trim();
+  if (!pid) throw new Error('缺少 providerId');
+  const cfg = getConfig();
+  const providers = (cfg.providers || []).map((p) => ({ ...p, models: [...(p.models || [])] }));
+  const p = providers.find((x) => x.id === pid);
+  if (!p) throw new Error('提供商不存在');
+
+  let nextBase = p.baseURL;
+  if (baseUrl !== undefined) {
+    const base = normalizeBaseUrl(baseUrl);
+    if (!base) throw new Error('Base URL 不能为空');
+    const clash = providers.find((x) => x.id !== pid && normalizeBaseUrl(x.baseURL) === base);
+    if (clash) throw new Error(`这个地址已经被「${clash.displayName || clash.id}」占用`);
+    nextBase = base;
+    p.baseURL = base;
+    p.needsBaseUrl = false;
+  }
+  if (displayName !== undefined) {
+    const name = String(displayName ?? '').trim();
+    p.displayName = name || hostDisplayName(nextBase);
+  }
+  if (apiKey !== undefined && String(apiKey ?? '').trim()) {
+    p.apiKeyFrom = 'manual';
+  }
+
+  const patch = {
+    providers: {
+      __replace__: providers.map(({ apiKey: _ak, ...rest }) => rest)
+    }
+  };
+  if (apiKey !== undefined && String(apiKey ?? '').trim()) {
+    const keys = { ...(cfg.dshProviderKeys || {}) };
+    keys[pid] = String(apiKey).trim();
+    patch.dshProviderKeys = keys;
+  }
+  // 主模型正用这个提供商 → 同步 api.baseUrl，否则请求还发往旧端点
+  if (String(cfg.api?.provider ?? '') === pid
+      && normalizeBaseUrl(cfg.api?.baseUrl) !== normalizeBaseUrl(nextBase)) {
+    patch.api = { baseUrl: nextBase };
+  }
+  updateConfig(patch);
+  return withResolvedKey(p);
 }
 
 /**

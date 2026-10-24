@@ -138,7 +138,7 @@ export async function verifyAccount(token) {
  * @param {object} o { kind: 'skill'|'plugin', id, displayName, description, token, captchaVerifyParam? }
  * @returns 服务器响应 { ok, item, renamedTo? }
  */
-export async function publishModule({ kind, id, displayName, description, token, captchaVerifyParam = '' }) {
+export async function publishModule({ kind, id, displayName, description, token, captchaVerifyParam = '', update = false }) {
   const dir = path.join(ROOT, kind === 'plugin' ? 'plugins' : 'skills', id);
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     throw new Error(`目录不存在：${dir}`);
@@ -151,7 +151,13 @@ export async function publishModule({ kind, id, displayName, description, token,
   if (description) form.append('description', String(description));
   // 阿里云验证码验签：远端强制校验，一次性 token（前端弹出人机验证后拿到）
   if (captchaVerifyParam) form.append('captchaVerifyParam', String(captchaVerifyParam));
-  const res = await fetch(`${MARKET_API_BASE}/market/publish`, {
+  // 更新已有条目走另一条路：/market/{plugins|skills}/<id>/update
+  // （首次发布才用 /market/publish；同 id 重复发布会报“市场上已存在同 id 的条目”）
+  const kindPath = kind === 'plugin' ? 'plugins' : 'skills';
+  const url = update
+    ? `${MARKET_API_BASE}/market/${kindPath}/${encodeURIComponent(id)}/update`
+    : `${MARKET_API_BASE}/market/publish`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: token ? { 'X-Account-Token': token } : {},
     body: form,

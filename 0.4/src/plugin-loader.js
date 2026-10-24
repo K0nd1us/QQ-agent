@@ -31,6 +31,7 @@ import { registerTool, unregisterTool, unregisterToolsBySkill, getTool, listTool
 import { skillManager } from './skills/manager.js';
 import { normalizeManifest, isManifestUsable, SKILL_API_VERSION, kindOfDir } from './skills/manifest.js';
 import { skillErrorText } from './skills/errors.js';
+import { getConfig } from './config.js';
 
 // ⚠️ 必须以**模块自身位置**为锚点，不能用 process.cwd()。
 // 打包/安装版里 App 文件在 <install>/resources/app/，而快捷方式的"起始位置"
@@ -68,7 +69,47 @@ function adaptLegacyPrompt(raw, manifest) {
  * 构造暴露给 Skill 的安全 API。
  * 与旧插件 API 的差别：多了 config / hook 注册 / 能力查询，但仍然只给白名单能力。
  */
-function createSkillApi(skillId, permissions = []) {
+/**
+ * Skill 的持久化存储：data/<skillId>.json。
+ *
+ * 加这个是因为「插件的每日上限/去重记录」全靠 api.storage，而 createSkillApi
+ * 里一度把它删掉了 —— 于是 bili-browse 的 shareLog/likeLog/commentLog/forwardLog
+ * 全部退化成内存里的默认值，每次热重载归零，每日上限形同虚设。
+ * 接口保持 get(key, def) / set(key, value) / remove(key)，别改成函数式。
+ */
+function makeSkillStorage(skillId) {
+  const file = path.join(APP_ROOT, 'data', `${skillId}.json`);
+  const readAll = () => {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { return {}; }
+  };
+  const writeAll = (obj) => {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
+      return true;
+    } catch { return false; }
+  };
+  return {
+    get: (key, def = null) => {
+      const all = readAll();
+      return Object.prototype.hasOwnProperty.call(all, key) ? all[key] : def;
+    },
+    set: (key, value) => {
+      const all = readAll();
+      all[key] = value;
+      return writeAll(all);
+    },
+    remove: (key) => {
+      const all = readAll();
+      delete all[key];
+      return writeAll(all);
+    },
+    all: () => readAll(),
+    file
+  };
+}
+
+function createSkillApi(skillId, permissions = [], sink = null) {
   const has = (name) => permissions.includes(name);
   return {
     // 注册工具（自动加 skillId 前缀 + 绑定来源，便于开关联动与批量清理）
@@ -93,6 +134,21 @@ function createSkillApi(skillId, permissions = []) {
     },
     // 读取本 Skill 的配置（默认值已由 manifest.settings 合并）
     config: () => skillManager.settingsOf(skillId),
+    /**
+     * 查询宿主自带的工具（例：meme-taste 想直接调核心的 collect_sticker 收藏表情）。
+     *
+     * 之前的 api 上只有 registerTool，没有"拿别人工具"的入口 —— 于是
+     * meme-taste 只能靠 api.tools 快照，而那个字段根本不存在，表现为
+     * "收藏表情永远报『核心的收藏表情没挂上』"。这里给一个**实时**查询口，
+     * 不依赖加载顺序，也不会拿到过期快照。
+     */
+    getTool: (id) => {
+      try { return getTool(String(id || '')) || null; } catch { return null; }
+    },
+    /** 全部已注册工具（含插件/skill 注册的），实时取，别在 setup 里缓存成快照用 */
+    get tools() {
+      try { return listTools(); } catch { return []; }
+    },
     // 查询其它 Skill 是否生效（用于"我依赖的知识库没开就别硬跑"这类判断）
     isSkillActive: (id, ctx = {}) => skillManager.isActive(id, ctx).active,
     /**
@@ -117,13 +173,33 @@ function createSkillApi(skillId, permissions = []) {
     // ⚠️ 必须先 util.format(...args) 再加前缀：format 只把**第一个参数**当格式串，
     //    如果写成 console.log(前缀, ...args)，前缀占掉第一位，插件写的
     //    log('已加载（%s~%s）', a, b) 里的 %s 就永远不会被替换（打印字面 %s）。
-    log: (...args) => console.log(`[skill:${skillId}]`, format(...args)),
-    warn: (...args) => console.warn(`[skill:${skillId}]`, format(...args)),
-    error: (...args) => console.error(`[skill:${skillId}]`, format(...args)),
+    // ⚠️ sink 是宿主 logger：console 输出在 Electron 里进不了 data/logs/*.log，
+    //    插件以前只能靠 console，于是"运行时到底跑没跑"完全查不到
+    //    （bili-browse 两天零日志就是这么来的）。这里同时写宿主日志。
+    log: (...args) => {
+      const line = format(...args);
+      console.log(`[skill:${skillId}]`, line);
+      if (sink) { try { sink(`[${skillId}] ${line}`); } catch { /* 日志失败不影响主流程 */ } }
+    },
+    warn: (...args) => {
+      const line = format(...args);
+      console.warn(`[skill:${skillId}]`, line);
+      if (sink) { try { sink(`[${skillId}] ⚠️ ${line}`); } catch { /* ignore */ } }
+    },
+    error: (...args) => {
+      const line = format(...args);
+      console.error(`[skill:${skillId}]`, line);
+      if (sink) { try { sink(`[${skillId}] ❌ ${line}`); } catch { /* ignore */ } }
+    },
+    // 持久化存储（data/<skillId>.json）
+    storage: makeSkillStorage(skillId),
     // 只有声明了 web_fetch 权限才拿得到 fetch
     fetch: has('web_fetch')
       ? globalThis.fetch
       : () => Promise.reject(new Error(`Skill ${skillId} 未声明 web_fetch 权限`)),
+    // 整份运行时配置（只读用）：有的插件要按 QQ 号解析提供商端点（providers/dshProviderKeys），
+    // 这属于全局配置而不是本插件切片，所以单独开一个只读入口。
+    globalConfig: () => JSON.parse(JSON.stringify(getConfig())),
     utils: {
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       safeJsonParse: (text, fallback = null) => {
@@ -166,10 +242,11 @@ function readManifest(dir) {
  *
  * 目录语义定义见 skills/manifest.js 的 DIR_KIND。
  */
-function lintKindPlacement(kind, { manifest, toolIds, providers, hooks }, log) {
+function lintKindPlacement(kind, { manifest, toolIds, providers, hooks, resolveRoute }, log) {
   if (!kind) return;
   const hasTools = (toolIds || []).length > 0;
-  const provides = Object.keys(providers || {}).length > 0 || Object.keys(hooks || {}).length > 0;
+  const provides = Object.keys(providers || {}).length > 0 || Object.keys(hooks || {}).length > 0
+    || typeof resolveRoute === 'function';   // 按人切 API 这类扩展点也算"有人会调用"
 
   if (kind === 'skill' && !hasTools) {
     log(`[skill] ⚠️ ${manifest.id} 在 skills/（LLM 型）却没有注册任何工具：`
@@ -329,7 +406,7 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
   }
 
   const permissions = Array.isArray(found.raw.permissions) ? found.raw.permissions : [];
-  const api = createSkillApi(manifest.id, permissions);
+  const api = createSkillApi(manifest.id, permissions, log);
 
   // ── 新旧交替的顺序闸（2026-09 修订版）────────────────────────────────────
   // 目标有两个，且互相牵制：
@@ -435,7 +512,9 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
     } : () => { unregisterToolsBySkill(manifest.id); },
     hooks: (mod.hooks && typeof mod.hooks === 'object') ? mod.hooks : {},
     providers: (mod.providers && typeof mod.providers === 'object') ? mod.providers : {},
-    promptSections: typeof mod.promptSections === 'function' ? mod.promptSections : null
+    promptSections: typeof mod.promptSections === 'function' ? mod.promptSections : null,
+    // 可选：按发送者决定这一轮用哪个 API（返回 { baseUrl, apiKey, model, provider } 或 null）
+    resolveRoute: typeof mod.resolveRoute === 'function' ? mod.resolveRoute : null
   };
   skill.loadError = null;
 

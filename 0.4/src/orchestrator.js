@@ -19,6 +19,7 @@ import { currentProviders } from './providers.js';
 import { skillManager } from './skills/manager.js';
 import { getToolAvailability } from './tool-registry.js';
 import { rescueUnsentReply } from './reply-rescue.js';
+import { noteSummoned, takeFollowUp } from './followup.js';
 
 export class Orchestrator {
   constructor({ store, memory, stickers, sender, sessions, onebot, emit = null, reminders = null, videoReader = null }) {
@@ -51,6 +52,9 @@ export class Orchestrator {
     this.sessionAbortMarks = new Set(); // 用户请求中止的 sessionId（abortSession 打标记，#runAgent 每轮检查）
     this.sessionAbortControllers = new Map(); // sessionId -> AbortController（中止时中断在途 LLM 请求）
     this.runSeq = new Map();           // chatKey -> 第几次处理（跨重启清零即可）
+    // 接话续聊（src/followup.js）：被 @ 之后允许不靠 @ 再接几句，用完就只认 @。
+    // 这里只记"本次唤醒是续聊额度换来的"，好让会话记录写清原因。
+    this.pendingFollowUp = new Map();  // chatKey -> {used,max}
     // ── 活跃模式（chatActive）──
     // chatKey -> { topic, until }：活跃期状态（话题锚点 + 到期时间）。
     // 1/2/3 档触发响应且模型 finish 时带回 activeTopic → 进入活跃期：
@@ -189,6 +193,19 @@ export class Orchestrator {
         roll: null
       });
       if (!tierResult.shouldRespond) {
+        // 没人再喊它 —— 但刚被 @ 过、续聊额度还没用完时，允许它再接一句
+        //（额度用完 / 超时 就彻底退回"只认 @"）。
+        const fu = takeFollowUp(chatKey);
+        if (fu) {
+          tierResult.shouldRespond = true;
+          tierResult.reason = `接话续聊 ${fu.used}/${fu.max}`;
+          this.pendingFollowUp.set(chatKey, fu);
+        }
+      }
+      if (tierResult.shouldRespond) {
+        // 本轮是"真被喊到"（而不是续聊捡来的）→ 重置续聊额度
+        if (!this.pendingFollowUp.has(chatKey)) noteSummoned(chatKey);
+      } else {
         // 不触发：这条消息立即标已读（只标这一条，不动窗口外已积压的未读——
         // 那些是上一批遗留，由兜底定时器/下一次触发处理）。
         if (entry) {
@@ -197,6 +214,23 @@ export class Orchestrator {
           this.store.markAllRead(chatKey);
         }
         this.emit('chat-update', chatKey);
+        // 「嗅探钩子」：即使这轮不唤醒模型，也把消息递给插件看一眼。
+        // 只有一个独立钩子名（on-message），不碰 before-context —— 后者是"要
+        // 组装提示词了"的语义，让它在不唤醒的轮次里跑会让一堆注入类插件白算。
+        // 成本：一次函数调用 + 插件内部的纯本地判定；runHook 内部已做错误隔离。
+        if (entry) {
+          const kind = String(chatKey).startsWith('group:') ? 'group' : 'private';
+          void skillManager
+            .runHook('on-message', {
+              chatKey,
+              kind,
+              chatId: String(chatKey).split(':')[1] || '',
+              chatName: (typeof this.store.chatName === 'function' && this.store.chatName(chatKey)) || '',
+              triggerEntries: [entry],
+              entry
+            })
+            .catch(() => {});
+        }
         return;
       }
     }
@@ -450,7 +484,21 @@ export class Orchestrator {
             isPrivate: String(chatKey).startsWith('private:'),
             roll: null
           });
-          if (r.shouldRespond) { batchFloorTs = m.ts; hasTrigger = true; break; }   // 最早的触发消息定边界
+          if (r.shouldRespond) {
+            batchFloorTs = m.ts;
+            hasTrigger = true;
+            noteSummoned(chatKey);   // 真被喊到：重置续聊额度
+            break;
+          }   // 最早的触发消息定边界
+        }
+        // 全部没触发：如果刚被 @ 过且续聊额度没用完，就接最近这几句
+        if (!hasTrigger) {
+          const fu = takeFollowUp(chatKey);
+          if (fu && probe.length) {
+            batchFloorTs = probe[probe.length - 1].ts;
+            hasTrigger = true;
+            this.pendingFollowUp.set(chatKey, fu);
+          }
         }
       } else {
         // 活跃期：必响应，边界 = 最早的未读
@@ -522,6 +570,14 @@ export class Orchestrator {
         isPrivate: String(chatKey).startsWith('private:'),   // 私聊恒响应
         roll: null
       });
+    // 接话续聊：这批是"续聊额度"换来的（没人再 @ 它），会话记录里写明原因
+    const fuPending = this.pendingFollowUp.get(chatKey);
+    if (fuPending) this.pendingFollowUp.delete(chatKey);
+    if (fuPending && !tierResult.shouldRespond) {
+      tierResult.shouldRespond = true;
+      tierResult.tier = Math.max(1, Number(tierResult.tier) || 1);
+      tierResult.reason = `接话续聊 ${fuPending.used}/${fuPending.max}`;
+    }
     // 活跃期覆盖：必响应，读取条数与其余档位一致（统一 historyCount），
     // reason 标注活跃来源，会话页可解释"为什么 1 档设置却响应了"。
     const activeState = this.#activeState(chatKey);
@@ -766,8 +822,38 @@ export class Orchestrator {
       visionEnabled,
       searchEnabled,
       proactive,
-      sessionId: session.id
+      sessionId: session.id,
+      // store / memory 要给**所有**钩子，不能只给 before-context：
+      // skills/meme-taste 的 before-llm-messages 靠 store.recent 找"群里最近出现的图"
+      // （recentCandidates），少了这个就恒为"没有候选"，
+      // 表现为"收藏功能开着但一次都没收过"——查了很久才发现是载荷缺字段。
+      store: this.store,
+      memory: this.memory
     };
+
+    // ── 按发送者切私有 API ──
+    // qq-api-router 之类插件可以按"是谁在跟机器人说话"指定另一个端点和 Key。
+    // 约定：返回 null 就用默认主模型；返回了就用它，且**不**排备选、**不**退公共池
+    // （见 llm.js chatCompletionWithRetry 的 route 分支）。
+    // 只在"有人触发"的运行里生效：主动发言/定时任务没有发送者，一律走默认。
+    let routeOverride = null;
+    try {
+      const triggerSenderId = String(triggerEntries?.[triggerEntries.length - 1]?.senderId ?? '');
+      if (triggerSenderId) {
+        routeOverride = await skillManager.resolveRoute({
+          ...skillContext,
+          triggerEntries,
+          triggerSenderId,
+          selfId: this.onebot.selfId
+        });
+        if (routeOverride) {
+          console.log(`[orchestrator] ${chatKey} 按发送者 ${triggerSenderId} 切私有 API：`
+            + `${routeOverride.provider || routeOverride.baseUrl} / ${routeOverride.model}`);
+        }
+      }
+    } catch (error) {
+      skillManager.recordError('resolveRoute', error);
+    }
 
     // Skill 生命周期：提示词组装之前先跑 before-context。
     // 注意 hook 只能**追加/加工上下文**；安全规则、工具协议等核心提示词由 prompt.js 独占，
@@ -995,7 +1081,7 @@ export class Orchestrator {
       // 网络抖动/5xx/429 会自动重试（同一轮请求，messages 不变，幂等不重复发言）。
       // abortSignal：会话级中止时在途请求立即断开 —— isRetryableError 把
       // "中止"判为不可重试，chatCompletionWithRetry 不再打下一发，直接上抛。
-      const response = await chatCompletionWithRetry({ messages, tools: openAiTools, skillContext, signal: abortSignal });
+      const response = await chatCompletionWithRetry({ messages, tools: openAiTools, skillContext, signal: abortSignal, route: routeOverride });
       session.model = response.model || session.model;
       // 渠道与模型必须同源：fallback 可以配另一个 provider，只更新 model 会把
       // 这次调用记到主渠道名下，导致按渠道拆分的成本报表误导用户。

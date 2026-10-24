@@ -122,6 +122,28 @@ function resolveProviderEndpoint(providerId) {
 }
 
 /**
+ * 把插件给出的 route 补成一份完整的 overrides（缺字段用当前主模型的兜底）。
+ * 返回 null 表示"不指定，走默认主模型"。
+ */
+function normalizeRoute(route) {
+  if (!route || typeof route !== "object") return null;
+  const base = effectiveApi();
+  const baseUrl = String(route.baseUrl ?? "").trim();
+  const model = String(route.model ?? "").trim();
+  if (!baseUrl || !model) return null;
+  return {
+    ...base,
+    baseUrl,
+    model,
+    apiKey: String(route.apiKey ?? "").trim() || base.apiKey || "",
+    provider: String(route.provider ?? "").trim() || undefined,
+    // 私有端点失败（欠费/额度用尽/连不上）时是否允许退回公共池（主模型 + 备选）。
+    // 默认允许：插件那行的 Key 没钱了，不该让这个人在群里没人回。
+    fallbackToPublic: route.fallbackToPublic !== false
+  };
+}
+
+/**
  * 构建"主模型 + 备选模型"的候选请求序列。
  * 第一项永远是当前主模型；之后按 api.fallbackModels 顺序追加。
  * 每项是一个可直接传给 chatCompletion 的 overrides 对象。
@@ -173,6 +195,14 @@ export function isRetryableError(error) {
   if (/HTTP\s*(401|400|403|404|405|409|413|422)/i.test(msg)) return false;
   if (/unauthorized|forbidden|invalid api.?key|incorrect api.?key/i.test(msg)) return false;
 
+  // 余额/额度耗尽：重试同一个模型绝不会变好，但要**立刻**让上层切到备选模型，
+  // 所以这里返回 false（不重试）而不是 true（重试）。
+  // 注意必须排在下面的 /quota/ 规则之前——"insufficient_quota" 也含 quota，
+  // 但它是欠费不是限流，白重试两次只会多等 3 秒、多发两次请求。
+  if (/HTTP\s*402|insufficient[_\s-]?quota|insufficient[_\s-]?balance|insufficient[_\s-]?fund|payment required|no resource pack|exceeded your current quota|余额不足|余额已用尽|欠费|资源包/i.test(msg)) {
+    return false;
+  }
+
   // 明确的暂时性故障
   if (/HTTP\s*5\d\d/i.test(msg)) return true;                        // 5xx
   if (/429|rate.?limit|限流|too many requests|quota/i.test(msg)) return true;
@@ -207,8 +237,52 @@ export function isRetryableError(error) {
  *   额外带 _usedModel（实际成功的模型 id）与 _usedApi（实际使用的端点配置），
  *   调用方据此同步 session.model / session.vendor，保证成本看板的「渠道:模型」同源。
  */
+/**
+ * 判断错误是不是"这个模型不认图片部分"。
+ *
+ * 备选模型常常是纯文本模型（如智谱 glm-4.7-flash）：同一份 messages 里带
+ * image_url 部分时，网关会返回 400 `messages.content.type 参数非法，取值范围 [text]`
+ * （错误码 1210）。这类错误换 key/重试都没用，唯一出路是把图片摘掉再发一次，
+ * 让机器人至少还能用文字回应，而不是整轮报错。
+ */
+function isTextOnlyContentError(error) {
+  const msg = String(error?.message ?? error ?? '');
+  return /content\.type|messages\.content|"code"\s*:\s*"?1210/i.test(msg);
+}
+
+/** 把 messages 里的 image_url / video_url 部分摘掉，换成一行说明；无图片时原样返回。 */
+export function stripMediaParts(messages) {
+  if (!Array.isArray(messages)) return messages;
+  let changed = false;
+  const out = messages.map((m) => {
+    if (!Array.isArray(m?.content)) return m;
+    const kept = m.content.filter((p) => p?.type !== 'image_url' && p?.type !== 'video_url');
+    if (kept.length === m.content.length) return m;
+    changed = true;
+    return {
+      ...m,
+      content: [...kept, { type: 'text', text: '（这一轮带有图片，但当前模型不支持看图，图片已省略）' }]
+    };
+  });
+  return changed ? out : messages;
+}
+
 export async function chatCompletionWithRetry(args, retries = 2) {
-  const candidates = buildCandidateApis();
+  // 按发送者切私有 API：调用方（orchestrator）解析出 route 时，**只**用这一个端点，
+  // 私有绑定：只用这个人的端点 / Key 去发，不排队别人的备选模型，
+  // 避免"张三的 Key 被拿去跑李四的对话"。
+  // 但私有端点欠费 / 额度用尽 / 连不上时，按 fallbackToPublic（默认开）退回公共池，
+  // 否则绑定的人一没钱就会在群里彻底没人回。
+  const route = normalizeRoute(args?.route);
+  const publicPool = buildCandidateApis();
+  const candidates = route
+    ? (route.fallbackToPublic === false
+      ? [{ overrides: route, label: `${route.model} @ ${route.provider || route.baseUrl}` }]
+      : [
+        { overrides: route, label: `${route.model} @ ${route.provider || route.baseUrl}（私有）` },
+        ...publicPool.map((c) => ({ ...c, label: `${c.label}（回落到公共池）` }))
+      ])
+    : publicPool;
   let lastError = null;
 
   for (let ci = 0; ci < candidates.length; ci++) {
@@ -222,7 +296,12 @@ export async function chatCompletionWithRetry(args, retries = 2) {
       // 曾经退避 sleep 期间不看中断，最多再白打一次 API（白花一份钱）
       if (args?.signal?.aborted) throw args.signal.reason ?? new Error('aborted');
       try {
-        const r = await chatCompletion({ ...args, overrides });
+        // 切到备选模型时默认关掉思考：备选只求「还能说话」，不值得多等十几秒。
+        // 用户在设置里显式开了思考（effort 非空或 thinkingMode=on）则尊重设置。
+        const cfgApi = getConfig().api || {};
+        const userThinking = String(cfgApi.thinkingEffort || '').trim() || (/^on$/i.test(String(cfgApi.thinkingMode || '').trim()) ? 'on' : '');
+        const forceNoThink = ci > 0 && !userThinking ? 'off' : null;
+        const r = await chatCompletion({ ...args, overrides, thinkingMode: forceNoThink });
         r._usedModel = r.model || (overrides?.model ?? getConfig().api?.model ?? '');
         // 把"这次实际用的端点"一并带回去：备选模型可能来自**另一个 provider**，
         // 调用方要据此同步 vendor，否则成本看板的「渠道：模型」聚合会串味。
@@ -241,6 +320,25 @@ export async function chatCompletionWithRetry(args, retries = 2) {
           if (signal?.aborted) { clearTimeout(t); reject(signal.reason ?? new Error('aborted')); return; }
           signal?.addEventListener?.('abort', onAbort, { once: true });
         });
+      }
+    }
+    // 纯文本模型不认图片部分（400 code 1210）：把图片摘掉、同一个候选再试一次，
+    // 至少让这一轮能说话，而不是让用户看到"运行失败"。
+    if (lastError && isTextOnlyContentError(lastError)) {
+      const stripped = stripMediaParts(args?.messages);
+      if (stripped !== args?.messages) {
+        const cfgApi2 = getConfig().api || {};
+        const userThinking2 = String(cfgApi2.thinkingEffort || '').trim() || (/^on$/i.test(String(cfgApi2.thinkingMode || '').trim()) ? 'on' : '');
+        const forceNoThink2 = ci > 0 && !userThinking2 ? 'off' : null;
+        try {
+          console.warn(`[llm] ${label} 不接受图片部分，改为去掉图片重试（本轮按纯文本回答）`);
+          const r2 = await chatCompletion({ ...args, messages: stripped, overrides, thinkingMode: forceNoThink2 });
+          r2._usedModel = r2.model || (overrides?.model ?? getConfig().api?.model ?? '');
+          r2._usedApi = overrides ?? getConfig().api;
+          return r2;
+        } catch (e2) {
+          lastError = e2;
+        }
       }
     }
     // 该候选的所有重试都失败了：只有错误可重试才值得试下一个备选；
@@ -265,7 +363,7 @@ export async function chatCompletionWithRetry(args, retries = 2) {
  *    否则会出现"Skill 悄悄多打一次 API"这种既难发现又烧钱的问题。
  *    所以 Skill 只能给函数（改 body / 给建议），重试动作由本函数执行。
  */
-export async function chatCompletion({ messages, tools = null, toolChoice = 'auto', temperature = null, signal = null, overrides = null, skillContext = null, maxTokens = 0 }) {
+export async function chatCompletion({ messages, tools = null, toolChoice = 'auto', temperature = null, signal = null, overrides = null, skillContext = null, maxTokens = 0, thinkingMode = null }) {
   const baseApi = overrides || effectiveApi();
   // 主调用路径才切"图片/视频专用模型"（见 specializedModelFor 注释）
   let api = baseApi;
@@ -295,7 +393,12 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     const forced = specializedModelFor(messages, getConfig());
     if (forced && forced !== api.model) api = { ...api, model: forced };
   }
-  const ctx = skillContext || { api, model: api.model, messages };
+  // thinkingMode：按次覆盖思考模式（'off' = 这次别思考）。
+  // 目前只给「备选模型降级」用：像 GLM-4.5-Flash 默认开着思考，一句闲聊也要 26 秒、
+  // 烧掉 380 个 reasoning token；显式关掉后同样的请求 0.8 秒、3 个 token。
+  // 主模型路径不传，行为与之前完全一致。
+  const baseCtx = skillContext || { api, model: api.model, messages };
+  const ctx = thinkingMode ? { ...baseCtx, thinkingMode } : baseCtx;
 
   const buildBaseBody = () => {
     const body = {

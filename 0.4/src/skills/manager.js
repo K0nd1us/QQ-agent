@@ -429,6 +429,27 @@ export class SkillManager {
   }
 
   /**
+   * 解析"这一轮该用哪个 API"。按注册顺序问每个插件，第一个返回非空结果的胜出。
+   * 约定：返回 { baseUrl, apiKey, model, provider }；返回 null/undefined 表示"用默认"。
+   * 只用于按发送者切私有 API，绝不允许抛错影响主流程（内部隔离）。
+   */
+  async resolveRoute(context = {}) {
+    for (const skill of this.registry.list()) {
+      const fn = skill.resolveRoute;
+      if (typeof fn !== 'function') continue;
+      const st = this.isActive(skill.manifest.id, context);
+      if (!st.active) continue;
+      try {
+        const out = await this.#withTimeout(fn(context), skill.manifest.id);
+        if (out && typeof out === 'object') return { ...out, _skillId: skill.manifest.id };
+      } catch (error) {
+        this.#warn(skill.manifest.id, 'resolveRoute 失败', error);
+      }
+    }
+    return null;
+  }
+
+  /**
    * 收集提示词片段。priority 降序（数字大的更靠前），
    * 且一律排在核心系统提示词之后由 prompt.js 决定插入位置。
    */
