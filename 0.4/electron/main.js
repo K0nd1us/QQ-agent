@@ -149,13 +149,18 @@ ipcMain.on('app-refocus', () => {
     mainWindow.webContents.focus();
   } catch { /* 焦点回收失败不致命 */ }
 });
-let core = null;
+// 多账号：Electron 主进程只做「账号中心 + 各账号运行空间」的监督，
+// 不再自己 createApp —— 每个 QQ 号在独立 worker 线程里跑原有内核。
+let supervisor = null;
 let tray = null;
 let quitting = false;
 
+function primaryConfig() {
+  try { return supervisor?.getPrimaryConfig?.() || {}; } catch { return {}; }
+}
+
 function applyAutoStart() {
-  if (!core) return;
-  const cfg = core.getConfig();
+  const cfg = primaryConfig();
   app.setLoginItemSettings({ openAtLogin: !!cfg.server?.autoStart });
 }
 
@@ -163,25 +168,31 @@ function showWindow() {
   if (mainWindow) {
     mainWindow.show();
     mainWindow.focus();
-  } else {
-    createWindow(core?.lastPort ?? 3210);
+  } else if (supervisor?.hubPort) {
+    createWindow(supervisor.hubPort);
   }
 }
 
 function createTray() {
   const icon = nativeImage.createFromPath(ICON_PATH);
   tray = new Tray(icon);
-  tray.setToolTip(describeInstance());
+  tray.setToolTip(`${describeInstance()} · 账号中心`);
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示主界面', click: () => showWindow() },
-    { label: '暂停 / 恢复', click: () => core?.orchestrator.setPaused(!core.orchestrator.paused) },
+    { label: '打开账号中心', click: () => showWindow() },
+    {
+      label: '暂停 / 恢复全部账号',
+      click: () => {
+        const paused = supervisor?.pauseState?.().paused;
+        supervisor?.pauseAll?.(!paused).catch(() => {});
+      }
+    },
     { type: 'separator' },
     {
       label: '开机自启',
       type: 'checkbox',
-      checked: !!core.getConfig().server?.autoStart,
+      checked: !!primaryConfig().server?.autoStart,
       click: (item) => {
-        core.updateConfig({ server: { autoStart: item.checked } });
+        supervisor?.updatePrimaryConfig?.({ server: { autoStart: item.checked } });
         applyAutoStart();
       }
     },
@@ -197,7 +208,7 @@ function createWindow(port) {
     height: 860,
     minWidth: 960,
     minHeight: 640,
-    title: describeInstance(),
+    title: `${describeInstance()} · 账号中心`,
     backgroundColor: '#0f1115',
     autoHideMenuBar: true,
     icon: ICON_PATH,
@@ -261,7 +272,7 @@ function createWindow(port) {
   mainWindow.webContents.on('will-redirect', guardNavigation);
   // 关窗默认缩到托盘（真正退出走托盘菜单），符合"常驻机器人"的使用习惯
   mainWindow.on('close', (event) => {
-    if (!quitting && core?.getConfig().server?.closeToTray !== false) {
+    if (!quitting && primaryConfig().server?.closeToTray !== false) {
       event.preventDefault();
       mainWindow.hide();
     }
@@ -296,17 +307,17 @@ app.whenReady().then(async () => {
     });
     bootDiag('setProxy 完成');
     console.log('[window] 代理模式：direct（绕过系统代理）');
-    const { createApp } = await import('../src/app.js');
-    bootDiag('src/app.js 已导入');
-    core = createApp({ log: (...args) => console.log(...args) });
-    // 先启动服务拿到真实端口，再开窗口。
-    // 原先是 createWindow(core.lastPort ?? 3210) 在前、core.start() 在后 ——
-    // 此时 lastPort 尚未赋值，窗口恒按 3210 加载；若端口被占用顺延到 3211+，
-    // 首屏必然加载失败，只能靠 did-fail-load 2 秒重试兜底。
-    const port = await core.start();
-    core.lastPort = port;
-    bootDiag('核心已启动 port=' + port);
-    await createWindow(port);
+    // 账号中心 + 各账号 worker：全部在本进程内，任务管理器只多出线程、不多出进程。
+    const { createSupervisor } = await import('../src/accounts/supervisor.js');
+    bootDiag('账号中心模块已导入');
+    supervisor = createSupervisor({
+      baseDataDir: process.env.QQ_AGENT_DATA_DIR,
+      log: (...args) => console.log(...args)
+    });
+    // 先启动账号中心 HUB 拿到真实端口，再开窗口；各账号在后台并行启动。
+    const hubPort = await supervisor.start();
+    bootDiag('账号中心已启动 port=' + hubPort);
+    createWindow(hubPort);
     applyAutoStart();
     createTray();
     bootDiag('窗口与托盘就绪');
@@ -326,18 +337,16 @@ app.whenReady().then(async () => {
   }
 });
 
-// 退出清理：core.stop() 是 async（要 abortAll / 关 SSE / 关 server / 释放单实例锁），
-// 而 before-quit 是同步事件 —— 直接调它会让进程在 await 让出后就被销毁，
-// 清理链跑一半：锁文件可能残留、会话最后一次进度可能丢。
-// 正确做法：拦下这次退出，等 stop() 真正跑完再 app.quit()。
+// 退出清理：supervisor.stop() 会逐个停止账号 worker（abortAll / 关 SSE / 关 server /
+// 释放各自实例锁）再关闭账号中心。before-quit 是同步事件，必须拦下等异步清理跑完。
 let shuttingDown = false;
 app.on('before-quit', (event) => {
   quitting = true;
-  if (shuttingDown || !core) return;      // 第二次进入（自己触发的 quit）直接放行
+  if (shuttingDown || !supervisor) return;      // 第二次进入（自己触发的 quit）直接放行
   event.preventDefault();
   shuttingDown = true;
   Promise.resolve()
-    .then(() => core.stop())
+    .then(() => supervisor.stop())
     .catch((error) => console.error('[electron] 退出清理失败:', error?.message ?? error))
     .finally(() => app.quit());
 });

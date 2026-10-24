@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>账号中心 · QQ Agent</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
+  <link rel="stylesheet" href="/hub.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">Q</span>
+      <div>
+        <h1>账号中心</h1>
+        <p class="brand-sub">一个程序 · 多个 QQ 号 · 数据互相隔离</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost" id="theme-btn" type="button" title="切换明暗主题">◐</button>
+      <button class="btn btn-ghost" data-action="open-base-dir" type="button" title="打开账号数据根目录">数据目录</button>
+      <button class="btn btn-ghost" data-action="refresh" type="button" title="立即刷新">刷新</button>
+      <button class="btn btn-primary" data-action="create-open" type="button">＋ 新建账号</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary" id="summary" aria-label="总览"></section>
+
+    <section id="notices" class="notices" aria-live="polite"></section>
+
+    <section class="list-head">
+      <h2>账号</h2>
+      <p class="muted" id="list-hint">每个号有独立的数据目录、模型 Key、白名单、记忆、存档、用量与扩展配置。</p>
+    </section>
+
+    <section id="accounts" class="grid" aria-live="polite">
+      <div class="loading">正在读取账号…</div>
+    </section>
+
+    <section class="guide">
+      <details>
+        <summary>多号接入说明（第一次用建议看一遍）</summary>
+        <div class="guide-body">
+          <p><strong>一个 QQ 号 = 一套 OneBot 地址。</strong>每个号必须有自己的 WS/HTTP 端口，不能两个号填同一组地址，否则会互相抢事件、重复回复。账号中心检测到重复会直接标红。</p>
+          <p><strong>内置协议端。</strong>安装版内置的 SnowLuma 随 1 号账号启动；其它号需要在协议端里单独开一套端口（或使用另一个协议端实例），然后在对应账号的「打开控制台 → 设置 → OneBot」里填写。</p>
+          <p><strong>数据边界。</strong>记忆、聊天存档、会话、用量、模型/搜索 Key、白名单、人设、提醒、技能与插件开关、日志都按号独立；<code>skills/</code> 与 <code>plugins/</code> 的代码全机器共用，升级/安装一次即可。</p>
+          <p><strong>启停。</strong>每个号可以单独启动、停止、暂停；关闭程序时全部一起退出，下次打开按各自的「启用」状态自动恢复。</p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <!-- 新建账号 -->
+  <div class="overlay" id="create-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <h3 id="create-title">新建账号</h3>
+      <p class="modal-sub">会从 1 号账号复制设置模板（人设、聊天策略、工具、技能开关、界面偏好），并自动清空模型 Key、协议端令牌、白名单、屏蔽名单与聊天数据。</p>
+      <label class="field">
+        <span>账号名称</span>
+        <input id="create-name" maxlength="24" placeholder="例如：小号 / 测试号" autocomplete="off" />
+      </label>
+      <p class="field-hint">名称只用于账号中心显示，可以随时改。</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-action="create-cancel" type="button">取消</button>
+        <button class="btn btn-primary" data-action="create-submit" type="button">创建并启动</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 改名 -->
+  <div class="overlay" id="rename-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+      <h3 id="rename-title">重命名账号</h3>
+      <label class="field">
+        <span>账号名称</span>
+        <input id="rename-name" maxlength="24" autocomplete="off" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-action="modal-close" type="button">取消</button>
+        <button class="btn btn-primary" data-action="rename-submit" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 更多操作 -->
+  <div class="overlay" id="more-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="more-title">
+      <h3 id="more-title">账号操作</h3>
+      <p class="modal-sub" id="more-sub"></p>
+      <div class="more-list">
+        <button class="btn btn-ghost" data-action="rename-open" type="button">重命名</button>
+        <button class="btn btn-ghost" data-action="open-account-dir" type="button">打开数据目录</button>
+        <button class="btn btn-ghost" data-action="restart" type="button">重启该号</button>
+        <button class="btn btn-danger" data-action="delete-open" type="button">删除账号…</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-action="modal-close" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 删除确认 -->
+  <div class="overlay" id="delete-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+      <h3 id="delete-title">删除账号</h3>
+      <p class="modal-sub" id="delete-sub"></p>
+      <p class="danger-note">账号会先停止；数据目录不会被永久删除，而是移到 <code>accounts/.trash/</code> 下，误删还能捞回来。</p>
+      <label class="field">
+        <span>输入账号名称确认</span>
+        <input id="delete-confirm" autocomplete="off" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-action="modal-close" type="button">取消</button>
+        <button class="btn btn-danger" data-action="delete-submit" type="button">确认删除</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/hub.js"></script>
+</body>
+</html>

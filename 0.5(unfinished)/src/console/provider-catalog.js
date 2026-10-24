@@ -1,4 +1,5 @@
-import yaml from 'js-yaml';
+// js-yaml 5.x 只提供命名导出；命名空间导入同时兼容 4.x/5.x。
+import * as yaml from 'js-yaml';
 
 // YAML is data only. Credentials are extracted into the host's separate key map;
 // the source returned to panels never contains a pasted credential.

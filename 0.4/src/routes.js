@@ -973,11 +973,33 @@ export function createRoutes(deps) {
       method: 'POST', pattern: '/api/config',
       handler: async ({ req, res, json }) => {
         const patch = await readBody(req);
+        // 多账号：OneBot 地址/令牌改动后自动重连（原来是"保存后要重启才对地址生效"）。
+        // 必须在 updateConfig 前取旧值：updateConfig 会原地合并配置对象。
+        const before = getConfig();
+        const beforeWs = String(before.onebot?.wsUrl || before.snowluma?.wsUrl || '');
+        const beforeHttp = String(before.onebot?.httpUrl || before.snowluma?.httpUrl || '');
+        const beforeToken = String(before.onebot?.accessToken || before.snowluma?.accessToken || '');
         const next = updateConfig(patch);
         store.setMaxPerChat(next.store?.maxMessagesPerChat ?? 0);
         sessions?.setKeepFiles?.(next.store?.keepSessionFiles ?? 0);
         if (next.proactive?.enabled) orchestrator.startProactiveLoop(); else orchestrator.stopProactiveLoop();
         initPriceFeed(FIXED_PRICE_FEED_URL);
+        const nextWs = String(next.onebot?.wsUrl || next.snowluma?.wsUrl || '');
+        const nextHttp = String(next.onebot?.httpUrl || next.snowluma?.httpUrl || '');
+        const nextToken = String(next.onebot?.accessToken || next.snowluma?.accessToken || '');
+        if (nextWs !== beforeWs || nextHttp !== beforeHttp || nextToken !== beforeToken) {
+          if (!nextWs && !nextHttp) {
+            onebot.close();
+            log('[onebot] 协议端地址已清空，断开连接');
+          } else {
+            onebot.wsUrl = nextWs || onebot.wsUrl;
+            onebot.httpUrl = String(nextHttp || onebot.httpUrl).replace(/\/+$/, '');
+            onebot.accessToken = String(next.onebot?.accessToken || next.snowluma?.accessToken || '');
+            onebot.httpToken = String(next.onebot?.httpAccessToken || next.snowluma?.httpAccessToken || onebot.accessToken);
+            onebot.reconnect();
+            log(`[onebot] 协议端配置已更新，正在连接 ${onebot.wsUrl}`);
+          }
+        }
         emit('status', { configUpdated: true });
         // ⚠️ 必须脱敏：updateConfig 返回的是内存里的活配置对象，含明文 apiKey /
         //    accessToken / dshProviderKeys。GET /api/config 一直是脱敏的，

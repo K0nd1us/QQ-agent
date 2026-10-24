@@ -521,6 +521,16 @@ export function registerConsoleRoutes(http, deps) {
 
   // R01-R07: status, usage and price DTOs.
   http.route('GET', '/api/version', () => ({ version, appId, profile: deps.profile?.n }));
+  // 账号中心上下文：只读、不含密钥；单号直接运行时 multiAccount=false。
+  http.route('GET', '/api/account-context', () => {
+    const hubPort = Number(process.env.QQ_AGENT_HUB_PORT) || 0;
+    return {
+      multiAccount: hubPort > 0,
+      accountId: String(process.env.QQ_AGENT_ACCOUNT_ID || ''),
+      accountName: String(process.env.QQ_AGENT_ACCOUNT_NAME || ''),
+      hubUrl: hubPort > 0 ? `http://127.0.0.1:${hubPort}/` : ''
+    };
+  });
   http.route('GET', '/api/status', () => {
     const safe = (fn, fallback) => { try { return fn(); } catch (err) { return { ...fallback, error: String(err?.message ?? err) }; } };
     const ob = safe(() => {

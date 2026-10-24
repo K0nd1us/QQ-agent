@@ -3,7 +3,7 @@
   "version": "0.5.0",
   "description": "QQ Agent 0.5 —— DSH 薄内核 + 全插件架构（行为等价 0.4，实现从零）",
   "type": "module",
-  "main": "electron/main.js",
+  "main": "electron/accounts-main.js",
   "license": "MIT",
   "author": "QQ Agent contributors",
   "engines": {
@@ -23,7 +23,10 @@
     "shot:ui": "node scripts/shot-ui.mjs",
     "extension:check": "node scripts/extension-dev.mjs check",
     "extension:test": "node scripts/extension-dev.mjs test",
-    "extension:pack": "node scripts/extension-dev.mjs pack"
+    "extension:pack": "node scripts/extension-dev.mjs pack",
+    "desktop:single": "electron electron/main.js",
+    "server:accounts": "node src/accounts/server.js",
+    "test:accounts": "node test/accounts-registry-test.mjs && node test/accounts-supervisor-test.mjs"
   },
   "dependencies": {
     "js-yaml": "^4.3.2",

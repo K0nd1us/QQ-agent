@@ -753,6 +753,20 @@ export function createApp({ log = console.log } = {}) {
       return;
     }
 
+    // 账号中心上下文：只告诉控制台"我是哪个号、账号中心在哪"，不含任何密钥。
+    // 由 src/accounts/worker.js 在启动前写入环境变量；单账号直接运行时 hubUrl 为空，
+    // 前端不会显示"返回账号中心"，行为与旧版完全一致。
+    if (pathname === '/api/account-context' && req.method === 'GET') {
+      if (!originAllowed(req)) return json(res, 403, { error: '请求来源不被信任' });
+      const hubPortNow = Number(process.env.QQ_AGENT_HUB_PORT) || 0;
+      return json(res, 200, {
+        multiAccount: hubPortNow > 0,
+        accountId: String(process.env.QQ_AGENT_ACCOUNT_ID || ''),
+        accountName: String(process.env.QQ_AGENT_ACCOUNT_NAME || ''),
+        hubUrl: hubPortNow > 0 ? `http://127.0.0.1:${hubPortNow}/` : ''
+      });
+    }
+
     if (pathname.startsWith('/api/')) {
       if (!authorize(req)) return json(res, 401, { error: '未授权' });
       // 来源校验：挡住"恶意网页借浏览器打 127.0.0.1"（CSRF / DNS rebinding）。
@@ -946,7 +960,18 @@ export function createApp({ log = console.log } = {}) {
     })();
 
     await skillsReady;
-    await onebot.connect();
+    // 多账号：新账号的 OneBot 地址出厂为空（避免误连 1 号的 3001 端口、造成重复回复）。
+    // OneBotClient 构造器对空串会回退到 3001，所以"是否连接"必须在这里判断，
+    // 而不是交给构造函数。旧账号/首次运行仍带默认地址，行为不变。
+    const obNow = getConfig().onebot || {};
+    const configuredProtocolEnd = String(obNow.wsUrl || '').trim()
+      || String(obNow.httpUrl || '').trim()
+      || String(getConfig().snowluma?.wsUrl || '').trim();
+    if (!configuredProtocolEnd) {
+      log('[onebot] 该账号尚未配置协议端地址，已跳过连接；在 设置 → OneBot 填写并保存后会自动连接');
+    } else {
+      await onebot.connect();
+    }
 
     if (getConfig().proactive?.enabled) orchestrator.startProactiveLoop();
     orchestrator.startReminderLoop();   // 提醒（闹钟）调度：到点往群里发提醒
